@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 21", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 23", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3460,6 +3460,92 @@ if showFUWick and fuw_valid and not na(fuw_tip) and not na(fuw_bandHi)
         else
             label.set_xy(fuw_lblMag, _fuwR, fuw_futureMagnet)
 
+// ───────────────────────────────────────────────────────────────────────────────
+// 1A.9 RECURSIVE TARGET HIERARCHY — multi-TF FU left-pool magnets.
+// f_fuPool() detects the most-recent VALIDATED FU on whatever timeframe it is
+// requested on and returns its captured left-liquidity pool + induction band.
+// Lower timeframes target the HIGHER-TF pool (H4 pool is the magnet for H1/M15/
+// M5 recursion), per the spec's recursive target hierarchy.
+f_fuPool(simple float _wickFrac) =>
+    var float _tip   = na
+    var float _bH    = na
+    var float _bL    = na
+    var int   _dir   = 0
+    var float _pool  = na
+    var bool  _valid = false
+    var int   _fbar  = na
+    var float _lastPH = na
+    var float _lastPL = na
+    float _ph = ta.pivothigh(high, 5, 5)
+    float _pl = ta.pivotlow(low, 5, 5)
+    if not na(_ph)
+        _lastPH := _ph
+    if not na(_pl)
+        _lastPL := _pl
+    float _rng  = math.max(high - low, 1e-10)
+    bool  _bear = not na(_lastPH) and high > _lastPH and close < _lastPH and (high - math.max(open, close)) / _rng >= _wickFrac
+    bool  _bull = not na(_lastPL) and low  < _lastPL and close > _lastPL and (math.min(open, close) - low) / _rng >= _wickFrac
+    if _bear
+        _dir := -1
+        _tip := high
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _pool := _lastPH
+        _fbar := bar_index
+        _valid := false
+    else if _bull
+        _dir := 1
+        _tip := low
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _pool := _lastPL
+        _fbar := bar_index
+        _valid := false
+    if not _valid and _dir == -1 and not na(_bL) and bar_index > nz(_fbar) and close < _bL
+        _valid := true
+    if not _valid and _dir ==  1 and not na(_bH) and bar_index > nz(_fbar) and close > _bH
+        _valid := true
+    float _mid = na
+    float _bHi = na
+    float _bLo = na
+    if _dir == -1 and not na(_tip)
+        _mid := _bH + (_tip - _bH) * 0.50
+        _bHi := _bH + (_tip - _bH) * 0.62
+        _bLo := _bH + (_tip - _bH) * 0.38
+    else if _dir == 1 and not na(_tip)
+        _mid := _tip + (_bL - _tip) * 0.50
+        _bHi := _tip + (_bL - _tip) * 0.62
+        _bLo := _tip + (_bL - _tip) * 0.38
+    [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0]
+
+[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid]  = request.security(syminfo.tickerid, "240", f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid]  = request.security(syminfo.tickerid, "60",  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid] = request.security(syminfo.tickerid, "15",  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+
+// Recursive alignment % (how many layers carry a live validated FU) and the
+// winning future-magnet target = the HIGHEST timeframe with a valid aligned FU.
+int   _fuActiveCnt   = (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (fuw_valid ? 1 : 0)
+float fu_recursiveAlign = _fuActiveCnt / 4.0 * 100.0
+float  fu_winTarget = na
+string fu_winSrc    = "-"
+float  fu_winBand   = na
+if nz(h4_fuValid) == 1 and not na(h4_fuPool)
+    fu_winTarget := h4_fuPool
+    fu_winSrc    := "H4 FU Left Pool"
+    fu_winBand   := h4_fuMid
+else if nz(h1_fuValid) == 1 and not na(h1_fuPool)
+    fu_winTarget := h1_fuPool
+    fu_winSrc    := "H1 FU Left Pool"
+    fu_winBand   := h1_fuMid
+else if nz(m15_fuValid) == 1 and not na(m15_fuPool)
+    fu_winTarget := m15_fuPool
+    fu_winSrc    := "M15 FU Left Pool"
+    fu_winBand   := m15_fuMid
+else if fuw_valid and not na(fuw_futureMagnet)
+    fu_winTarget := fuw_futureMagnet
+    fu_winSrc    := "FU Left Pool"
+    fu_winBand   := fuw_mid
+
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
 
@@ -5571,6 +5657,20 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
                 array.push(dc_sc, math.min(_b + _ov + _al + erf_tradeReadiness * 0.06 - _dpen, 100.0))
                 array.push(dc_ty, _ov > 0 ? "FU + imbalance overlap" : _fst == "Interacting" ? "Residual FU" : "FU candle")
                 array.push(dc_cl, "")
+    // 1B) FU WICK AUTHORITY (1A.8/1A.9) — captured left-liquidity pool is the
+    //     HIGHEST-priority destination (Priority 1); its induction band Priority 2.
+    //     Recursive: the winner is the highest-TF validated FU pool aligned w/ bias.
+    if _tpl_bias != 0 and not na(fu_winTarget) and (_tpl_bias == 1 ? fu_winTarget > close : fu_winTarget < close)
+        float _fudpen = math.min(math.abs(close - fu_winTarget) / math.max(atr, 1e-10) * 1.5, 14.0)
+        array.push(dc_px, fu_winTarget)
+        array.push(dc_sc, math.min(96.0 + fu_recursiveAlign * 0.04 - _fudpen, 100.0))
+        array.push(dc_ty, fu_winSrc + " (magnet)")
+        array.push(dc_cl, "")
+    if _tpl_bias != 0 and not na(fu_winBand) and (_tpl_bias == 1 ? fu_winBand > close : fu_winBand < close)
+        array.push(dc_px, fu_winBand)
+        array.push(dc_sc, 90.0)
+        array.push(dc_ty, "FU induction band")
+        array.push(dc_cl, "")
     // 2) FRZ zones (curated, pre-scored imbalance / return zones)
     if _tpl_bias != 0 and array.size(frz_topArr) > 0
         for _i = 0 to array.size(frz_topArr) - 1
@@ -5831,6 +5931,15 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosWar, 0, 3, na(dc_bestPrice) ? "" : f_mosBar(dc_bestScore), text_color=#5ad1ff, text_size=size.small)
         table.cell(mosWar, 0, 4, "─ field ─", text_color=#7a86a8, text_size=size.tiny)
         table.cell(mosWar, 0, 5, dc_scoreboard, text_color=#b8c4e0, text_size=size.tiny)
+
+        // ── SECTION 6: FU MAP (middle right) — recursive FU wick authority ──
+        var table mosFU = table.new(position.middle_right, 1, 6, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#ff2fd0, 30), frame_width=2, border_width=0)
+        table.cell(mosFU, 0, 0, "═══  FU MAP  ═══", text_color=#ff7fe6, text_size=size.small)
+        table.cell(mosFU, 0, 1, "H4 " + (nz(h4_fuValid) == 1 ? "ACTIVE" : "—") + "   H1 " + (nz(h1_fuValid) == 1 ? "ACTIVE" : "—"), text_color=color.white, text_size=size.small)
+        table.cell(mosFU, 0, 2, "M15 " + (nz(m15_fuValid) == 1 ? "ACTIVE" : "—") + "   M5 " + (fuw_valid ? "ACTIVE" : "—"), text_color=color.white, text_size=size.small)
+        table.cell(mosFU, 0, 3, "Recursive Align  " + str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#5aff9e, text_size=size.small)
+        table.cell(mosFU, 0, 4, na(fu_winTarget) ? "Magnet  —" : ("Magnet  " + f_v72_px(fu_winTarget) + "  (" + fu_winSrc + ")"), text_color=#ffd000, text_size=size.small)
+        table.cell(mosFU, 0, 5, fuw_inductionExpected ? "Induction expected (midpoint)" : "Awaiting midpoint entry", text_color=#ffb347, text_size=size.small)
 
         // ── SECTION 7: THREAT MATRIX (bottom left) ──
         var table mosThr = table.new(position.bottom_left, 1, 3, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
