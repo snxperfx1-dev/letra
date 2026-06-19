@@ -26,11 +26,13 @@ bool   showPanel    = input.bool (true,  "Show conversation panel",         grou
 int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
 int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
 
-// ── Always scan the real timeframe. The whole network must stay visible no
-//    matter which chart timeframe the user is on, so we NEVER clamp a lower TF
-//    up to the chart TF — every magnet (M1 → W) is detected and remembered on
-//    every chart. (Pass-through kept as a function so call sites are stable.) ──
-f_safeTF(simple string _tf) => _tf
+// ── Cross-TF guard. Pine cannot cheaply pull a *lower* timeframe's full history
+//    onto a *higher* chart (it breaks/zeroes detection on Daily+), so any TF
+//    below the chart is clamped up to the chart TF and then skipped as a
+//    duplicate (see _ok* flags below). Net effect: the network always populates
+//    from the chart TF upward — on M1 you get M1→W (the full network); on H4 you
+//    get H4→W; on Daily you get D→W. Lower charts = richer network. ──
+f_safeTF(simple string _tf) => timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
 
 // ── FU pool detector (runs per requested timeframe) ──────────────────────────
 // FU = a spike through local structure (prior `_lb`-bar high/low) that closes
@@ -129,6 +131,16 @@ f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
         array.shift(nRev)
 
 // Remember a NEW validated FU per timeframe (tip change = a freshly born node).
+// A TF below the chart is clamped (duplicate of the chart TF) → skip its push.
+int  _chartSec = timeframe.in_seconds()
+bool _okW   = timeframe.in_seconds("W")   >= _chartSec
+bool _okD   = timeframe.in_seconds("D")   >= _chartSec
+bool _okH4  = timeframe.in_seconds("240") >= _chartSec
+bool _okH1  = timeframe.in_seconds("60")  >= _chartSec
+bool _okM15 = timeframe.in_seconds("15")  >= _chartSec
+bool _okM5  = timeframe.in_seconds("5")   >= _chartSec
+bool _okM3  = timeframe.in_seconds("3")   >= _chartSec
+bool _okM1  = timeframe.in_seconds("1")   >= _chartSec
 var float _pvW   = na
 var float _pvD   = na
 var float _pvH4  = na
@@ -137,28 +149,28 @@ var float _pvM15 = na
 var float _pvM5  = na
 var float _pvM3  = na
 var float _pvM1  = na
-if nz(wV)   == 1 and not na(wTip)   and (na(_pvW)   or wTip   != _pvW)
+if _okW and nz(wV)   == 1 and not na(wTip)   and (na(_pvW)   or wTip   != _pvW)
     f_nodeAdd(wTip,   wMid,   nz(wDir),   nz(wSc),   8)
     _pvW := wTip
-if nz(dV)   == 1 and not na(dTip)   and (na(_pvD)   or dTip   != _pvD)
+if _okD and nz(dV)   == 1 and not na(dTip)   and (na(_pvD)   or dTip   != _pvD)
     f_nodeAdd(dTip,   dMid,   nz(dDir),   nz(dSc),   7)
     _pvD := dTip
-if nz(h4V)  == 1 and not na(h4Tip)  and (na(_pvH4)  or h4Tip  != _pvH4)
+if _okH4 and nz(h4V)  == 1 and not na(h4Tip)  and (na(_pvH4)  or h4Tip  != _pvH4)
     f_nodeAdd(h4Tip,  h4Mid,  nz(h4Dir),  nz(h4Sc),  6)
     _pvH4 := h4Tip
-if nz(h1V)  == 1 and not na(h1Tip)  and (na(_pvH1)  or h1Tip  != _pvH1)
+if _okH1 and nz(h1V)  == 1 and not na(h1Tip)  and (na(_pvH1)  or h1Tip  != _pvH1)
     f_nodeAdd(h1Tip,  h1Mid,  nz(h1Dir),  nz(h1Sc),  5)
     _pvH1 := h1Tip
-if nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
+if _okM15 and nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
     f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
     _pvM15 := m15Tip
-if nz(m5V)  == 1 and not na(m5Tip)  and (na(_pvM5)  or m5Tip  != _pvM5)
+if _okM5 and nz(m5V)  == 1 and not na(m5Tip)  and (na(_pvM5)  or m5Tip  != _pvM5)
     f_nodeAdd(m5Tip,  m5Mid,  nz(m5Dir),  nz(m5Sc),  3)
     _pvM5 := m5Tip
-if nz(m3V)  == 1 and not na(m3Tip)  and (na(_pvM3)  or m3Tip  != _pvM3)
+if _okM3 and nz(m3V)  == 1 and not na(m3Tip)  and (na(_pvM3)  or m3Tip  != _pvM3)
     f_nodeAdd(m3Tip,  m3Mid,  nz(m3Dir),  nz(m3Sc),  2)
     _pvM3 := m3Tip
-if nz(m1V)  == 1 and not na(m1Tip)  and (na(_pvM1)  or m1Tip  != _pvM1)
+if _okM1 and nz(m1V)  == 1 and not na(m1Tip)  and (na(_pvM1)  or m1Tip  != _pvM1)
     f_nodeAdd(m1Tip,  m1Mid,  nz(m1Dir),  nz(m1Sc),  1)
     _pvM1 := m1Tip
 
@@ -175,7 +187,8 @@ if array.size(nPx) > 0
             else
                 if math.abs(close - _np) < _atr * 0.25
                     array.set(nRev, _i, array.get(nRev, _i) + 1) // revisit (defense) raises authority
-                array.set(nState, _i, _age > historyBars ? 3 : _age > dormantBars ? 1 : 0)
+                int _wtn = array.get(nWt, _i)                    // age scaled by TF: HTF nodes live far longer
+                array.set(nState, _i, _age > historyBars * _wtn ? 3 : _age > dormantBars * _wtn ? 1 : 0)
 
 // Effective authority = sub-score + timeframe weight*4 + revisits*3.
 f_auth(int _i) => array.get(nSc, _i) + array.get(nWt, _i) * 4.0 + array.get(nRev, _i) * 3.0
@@ -197,7 +210,7 @@ f_pathNodes(bool _aheadSide) =>
         for _i = 0 to array.size(nPx) - 1
             float _np    = array.get(nPx, _i)
             bool  _ahead = netBias == 1 ? _np > close : _np < close
-            if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin and (_aheadSide ? _ahead : not _ahead)
+            if array.get(nState, _i) != 2 and f_auth(_i) >= authMin and (_aheadSide ? _ahead : not _ahead)
                 array.push(_r, _i)
     if array.size(_r) > 1
         for _a = 1 to array.size(_r) - 1
@@ -255,19 +268,18 @@ if barstate.islast
             else
                 _openMem += 1
             float _a  = f_auth(_i)
-            if _st <= 1 and _a >= authMin
+            if _st != 2 and _a >= authMin
                 float _np = array.get(nPx, _i)
                 int   _nd = array.get(nDir, _i)
                 if showLevels
                     color _c = _st == 0 ? (_nd == 1 ? color.new(#00ffaa, 25) : color.new(#ff6600, 25)) : color.new(color.gray, 60)
                     array.push(level_lines, line.new(bar_index - 1, _np, bar_index + 12, _np, color = _c, width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
                     array.push(level_lbls, label.new(bar_index + 12, _np, f_wtTf(array.get(nWt, _i)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 20), textcolor = _st == 0 ? (_nd == 1 ? #00ffaa : #ff6600) : color.gray, size = size.tiny))
-                if _st == 0
-                    _activeTotal += 1
-                    if _nd == netBias and netBias != 0
-                        _activeAligned += 1
-                    if _a > _topAuth
-                        _topAuth := _a
+                _activeTotal += 1
+                if _nd == netBias and netBias != 0
+                    _activeAligned += 1
+                if _a > _topAuth
+                    _topAuth := _a
 
     // ── Routes: CURRENT path (forward, bias side) + PREVIOUS path (trail) ────
     float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
@@ -321,7 +333,7 @@ if barstate.islast
         array<int> _mg = array.new_int()
         if array.size(nPx) > 0
             for _i = 0 to array.size(nPx) - 1
-                if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin
+                if array.get(nState, _i) != 2 and f_auth(_i) >= authMin
                     array.push(_mg, _i)
         if array.size(_mg) > 1
             for _a = 1 to array.size(_mg) - 1
