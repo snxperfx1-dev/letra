@@ -286,6 +286,21 @@ f_tLowProb(float _o, float _h, float _l, bool _ht, bool _lt) =>
     float _pos = (close - _l) / math.max(_h - _l, syminfo.mintick)
     (_lt and not _ht) ? 30.0 : (_ht and not _lt) ? 70.0 : math.round(_pos * 100.0)
 f_tTag(float _o, string _nm) => _nm + (close > _o ? "▲" : close < _o ? "▼" : "—")
+// ── Visual cycle bar (Engine 8.0 UI):  L----O----●----H  (● price, O open) ────
+f_tBar(float _o, float _h, float _l) =>
+    int   _w   = 15
+    float _rng = math.max(_h - _l, 1e-10)
+    int   _oP  = math.max(1, math.min(_w - 2, math.round((_o - _l) / _rng * (_w - 1))))
+    int   _pP  = math.max(0, math.min(_w - 1, math.round((close - _l) / _rng * (_w - 1))))
+    string _s  = ""
+    for _i = 0 to _w - 1
+        _s := _s + (_i == _pP ? "●" : _i == _oP ? "O" : _i == 0 ? "L" : _i == _w - 1 ? "H" : "-")
+    _s
+f_tIcons(bool _ht, bool _lt) => (_ht ? "↑✓" : "↑?") + (_lt ? "↓✓" : "↓?")
+f_tCol(bool _ht, bool _lt) => (_ht and _lt) ? color.gray : _ht ? #5aff9e : _lt ? #ff5a5a : color.yellow
+f_tRem(float _el, simple string _tf) =>
+    float _r = (1.0 - _el) * timeframe.in_seconds(_tf)
+    _r >= 86400 ? str.tostring(math.round(_r / 86400.0)) + "d" : _r >= 3600 ? str.tostring(math.round(_r / 3600.0)) + "h" : str.tostring(math.round(_r / 60.0)) + "m"
 
 bool tMnHt = tMnH > tMnPH
 bool tMnLt = tMnL < tMnPL
@@ -532,10 +547,14 @@ if barstate.islast
         table.cell(readout, 1, 8, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = color.white, text_size = size.small)
         table.cell(readout, 0, 9, "Network · Pressure", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
         table.cell(readout, 1, 9, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #5aff9e : pdir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(readout, 0, 10, "Letra · Invalidation", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 10, na(waveOrigin) ? "—" : str.tostring(math.round_to_mintick(waveOrigin)), text_color = #ff8a8a, text_size = size.small)
+        table.cell(readout, 0, 11, "Letra · Rotation", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 11, timeConflict >= 50 ? "ROTATING" : "ALIGNED", text_color = timeConflict >= 50 ? color.yellow : #5aff9e, text_size = size.small)
 
     if showStrat
         if na(strat)
-            strat := table.new(position.top_left, 2, 18, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
+            strat := table.new(position.top_left, 2, 22, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
         table.cell(strat, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
         table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = vCol, text_size = size.large)
         table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
@@ -560,18 +579,26 @@ if barstate.islast
         table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : color.white, text_size = size.normal)
         table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = #ffd000, text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 11, action, text_color = aCol, text_size = size.large)
-        table.cell(strat, 0, 12, "─ TIME INTELLIGENCE ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 0, 12, "─ TEMPORAL CYCLES (cycle · pos · left) ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left)
         table.cell(strat, 1, 12, timeDir == 1 ? "▲" : timeDir == -1 ? "▼" : "—", text_color = timeDir == 1 ? #5aff9e : timeDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
-        table.cell(strat, 0, 13, "Cycles", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 13, tStack, text_color = color.white, text_size = size.normal)
-        table.cell(strat, 0, 14, "Time align / conflict", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 14, str.tostring(math.round(timeAlign)) + "% / " + str.tostring(math.round(timeConflict)) + "%", text_color = timeAlign >= 60 ? #5aff9e : color.yellow, text_size = size.normal)
-        table.cell(strat, 0, 15, "H1 timing", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 15, h1Timing + "  " + str.tostring(math.round(h1LowProb)) + "% low", text_color = color.white, text_size = size.normal)
-        table.cell(strat, 0, 16, "Likely sequence", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 16, tSeq, text_color = #00e5ff, text_size = size.normal)
-        table.cell(strat, 0, 17, "Paths  A / B / C", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 17, str.tostring(tP1) + "% / " + str.tostring(tP2) + "% / " + str.tostring(tP3) + "%", text_color = #b388ff, text_size = size.normal)
+        table.cell(strat, 0, 13, "MN " + f_tBar(tMnO, tMnH, tMnL), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 13, f_tIcons(tMnHt, tMnLt) + " " + f_tRem(f_tEl(tMnT, "M"), "M"), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal)
+        table.cell(strat, 0, 14, "WK " + f_tBar(tWO, tWH, tWL), text_color = f_tCol(tWHt, tWLt), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 14, f_tIcons(tWHt, tWLt) + " " + f_tRem(f_tEl(tWT, "W"), "W"), text_color = f_tCol(tWHt, tWLt), text_size = size.normal)
+        table.cell(strat, 0, 15, "D  " + f_tBar(tDO, tDH, tDL), text_color = f_tCol(tDHt, tDLt), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 15, f_tIcons(tDHt, tDLt) + " " + f_tRem(f_tEl(tDT, "D"), "D"), text_color = f_tCol(tDHt, tDLt), text_size = size.normal)
+        table.cell(strat, 0, 16, "H4 " + f_tBar(tH4O, tH4H, tH4L), text_color = f_tCol(tH4Ht, tH4Lt), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 16, f_tIcons(tH4Ht, tH4Lt) + " " + f_tRem(f_tEl(tH4T, "240"), "240"), text_color = f_tCol(tH4Ht, tH4Lt), text_size = size.normal)
+        table.cell(strat, 0, 17, "» H1 " + f_tBar(tH1O, tH1H, tH1L), text_color = f_tCol(tH1Ht, tH1Lt), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 17, f_tIcons(tH1Ht, tH1Lt) + " " + f_tRem(f_tEl(tH1T, "60"), "60"), text_color = f_tCol(tH1Ht, tH1Lt), text_size = size.normal)
+        table.cell(strat, 0, 18, "Align / Conflict", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 18, str.tostring(math.round(timeAlign)) + "% / " + str.tostring(math.round(timeConflict)) + "%", text_color = timeAlign >= 60 ? #5aff9e : color.yellow, text_size = size.normal)
+        table.cell(strat, 0, 19, "H1 timing", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 19, h1Timing + "  " + str.tostring(math.round(h1LowProb)) + "% low", text_color = color.white, text_size = size.normal)
+        table.cell(strat, 0, 20, "Sequence", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 20, tSeq, text_color = #00e5ff, text_size = size.normal)
+        table.cell(strat, 0, 21, "Paths  A / B / C", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 21, str.tostring(tP1) + "% / " + str.tostring(tP2) + "% / " + str.tostring(tP3) + "%", text_color = #b388ff, text_size = size.normal)
 
 // ── Alerts (global scope) ─────────────────────────────────────────────────────
 alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")

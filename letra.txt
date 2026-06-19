@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 43", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 44", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -916,51 +916,6 @@ float fractalCtxScore   = math.min(
      (l0_dir == fractalStackDir and fractalStackDir != 0 ? 14.0 : 0.0) +
      (l3_dir == fractalStackDir and fractalStackDir != 0 ?  6.0 : 0.0) +
      (m1_dir == fractalStackDir and fractalStackDir != 0 ?  4.0 : 0.0), 100.0)
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE) — full 5-cycle stack (MN/W/D/H4/H1)
-// Where price sits inside each nested time cycle: open · running H/L · prior H/L ·
-// bias · state · completion · liquidity taken; plus cross-cycle alignment/conflict,
-// H1 timing + low-first probability, temporal sequence and 3 temporal-path odds.
-// Displayed in the OPPORTUNITY panel and fed to the COPILOT. (5 request.security.)
-// ═══════════════════════════════════════════════════════════════════════════════
-[tieMnO, tieMnH, tieMnL, tieMnPH, tieMnPL, tieMnT] = request.security(syminfo.tickerid, "M",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieWO,  tieWH,  tieWL,  tieWPH,  tieWPL,  tieWT]  = request.security(syminfo.tickerid, "W",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieDO,  tieDH,  tieDL,  tieDPH,  tieDPL,  tieDT]  = request.security(syminfo.tickerid, "D",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieH4O, tieH4H, tieH4L, tieH4PH, tieH4PL, tieH4T] = request.security(syminfo.tickerid, "240", [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieH1O, tieH1H, tieH1L, tieH1PH, tieH1PL, tieH1T] = request.security(syminfo.tickerid, "60",  [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-f_tieEl(int _t, simple string _tf) => math.min(1.0, math.max(0.0, (float(timenow) - float(_t)) / (timeframe.in_seconds(_tf) * 1000.0)))
-f_tieTag(float _o, string _nm) => _nm + (close > _o ? "▲" : close < _o ? "▼" : "—")
-// ── Visual cycle bar:  L----O----●----H  (● = current price, O = cycle open) ──
-f_tieBar(float _o, float _h, float _l) =>
-    int   _w   = 15
-    float _rng = math.max(_h - _l, 1e-10)
-    int   _oP  = math.max(1, math.min(_w - 2, math.round((_o - _l) / _rng * (_w - 1))))
-    int   _pP  = math.max(0, math.min(_w - 1, math.round((close - _l) / _rng * (_w - 1))))
-    string _s  = ""
-    for _i = 0 to _w - 1
-        _s := _s + (_i == _pP ? "●" : _i == _oP ? "O" : _i == 0 ? "L" : _i == _w - 1 ? "H" : "-")
-    _s
-f_tieIcons(bool _ht, bool _lt) => (_ht ? "↑✓" : "↑?") + (_lt ? "↓✓" : "↓?")
-f_tieColor(bool _ht, bool _lt) => (_ht and _lt) ? color.gray : _ht ? #5aff9e : _lt ? #ff5a5a : color.yellow
-f_tieRem(float _el, simple string _tf) =>
-    float _r = (1.0 - _el) * timeframe.in_seconds(_tf)
-    _r >= 86400 ? str.tostring(math.round(_r / 86400.0)) + "d" : _r >= 3600 ? str.tostring(math.round(_r / 3600.0)) + "h" : str.tostring(math.round(_r / 60.0)) + "m"
-int   tieBull = (close > tieMnO ? 1 : 0) + (close > tieWO ? 1 : 0) + (close > tieDO ? 1 : 0) + (close > tieH4O ? 1 : 0) + (close > tieH1O ? 1 : 0)
-int   tieBear = (close < tieMnO ? 1 : 0) + (close < tieWO ? 1 : 0) + (close < tieDO ? 1 : 0) + (close < tieH4O ? 1 : 0) + (close < tieH1O ? 1 : 0)
-int   tieDir   = tieBull > tieBear ? 1 : tieBear > tieBull ? -1 : 0
-float tieAlign = (tieBull + tieBear) > 0 ? math.max(tieBull, tieBear) / (tieBull + tieBear) * 100.0 : 50.0
-float tieConflict = 100.0 - tieAlign
-bool  _tieH1ht = tieH1H > tieH1PH
-bool  _tieH1lt = tieH1L < tieH1PL
-float _tieH1pos = (close - tieH1L) / math.max(tieH1H - tieH1L, syminfo.mintick)
-float tieLowFirst = (_tieH1lt and not _tieH1ht) ? 30.0 : (_tieH1ht and not _tieH1lt) ? 70.0 : math.round(_tieH1pos * 100.0)
-string tieH1Timing = (_tieH1ht and _tieH1lt) ? "COMPLETION" : tieLowFirst >= 55 ? "LOW FIRST" : tieLowFirst <= 45 ? "HIGH FIRST" : "BALANCED"
-int   tieP1 = math.min(90, math.round(45.0 + tieAlign * 0.4))
-int   tieP3 = math.min(40, math.round(tieConflict * 0.25))
-int   tieP2 = math.max(0, 100 - tieP1 - tieP3)
-string tieStack = f_tieTag(tieMnO, "MN") + " " + f_tieTag(tieWO, "W") + " " + f_tieTag(tieDO, "D") + " " + f_tieTag(tieH4O, "H4") + " " + f_tieTag(tieH1O, "H1")
-string tieSeq = (not _tieH1lt ? "H1 low sweep" : not _tieH1ht ? "H1 high sweep" : "H1 complete") + " -> H4 " + (close > tieH4O ? "up" : "down") + " -> D " + (close > tieDO ? "highs" : "lows") + " -> W " + (close > tieWO ? "highs" : "lows")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 5 — MAX PIVOT MEMORY ENGINE
@@ -6100,16 +6055,13 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosThr, 0, 1, threat_state + "   " + f_mosBar(_thrCnt * 33.0), text_color=(_thrCnt == 0 ? #5aff9e : _thrCnt == 1 ? #ffe05a : _thrCnt == 2 ? #ffb347 : #ff5a5a), text_size=size.small)
         table.cell(mosThr, 0, 2, threat_show, text_color=color.white, text_size=size.small)
 
-        var table mosCop = table.new(position.bottom_right, 1, 9, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
-        table.cell(mosCop, 0, 0, "──────  COPILOT  ──────", text_color=#00ffcc, text_size=size.normal)
-        table.cell(mosCop, 0, 1, "CURRENT   " + currentDisplayPhase + " remains the dominant behaviour.", text_color=color.white, text_size=size.normal)
-        table.cell(mosCop, 0, 2, "WHY       " + story_why, text_color=color.silver, text_size=size.normal)
-        table.cell(mosCop, 0, 3, "NEXT      " + cop_next, text_color=color.aqua, text_size=size.normal)
-        table.cell(mosCop, 0, 4, "THREAT    " + story_threat, text_color=color.orange, text_size=size.normal)
-        table.cell(mosCop, 0, 5, "ACTION    " + cop_action, text_color=color.lime, text_size=size.normal)
-        table.cell(mosCop, 0, 6, "TIME      " + tieStack + "  (align " + str.tostring(math.round(tieAlign)) + "%)", text_color=#00e5ff, text_size=size.normal)
-        table.cell(mosCop, 0, 7, "TIMING    H1 " + tieH1Timing + "  " + str.tostring(math.round(tieLowFirst)) + "% low-first", text_color=color.white, text_size=size.normal)
-        table.cell(mosCop, 0, 8, "SEQUENCE  " + tieSeq, text_color=#9fb0d8, text_size=size.normal)
+        var table mosCop = table.new(position.bottom_right, 1, 6, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+        table.cell(mosCop, 0, 0, "──────  COPILOT  ──────", text_color=#00ffcc, text_size=size.small)
+        table.cell(mosCop, 0, 1, "CURRENT   " + currentDisplayPhase + " remains the dominant behaviour.", text_color=color.white, text_size=size.small)
+        table.cell(mosCop, 0, 2, "WHY       " + story_why, text_color=color.silver, text_size=size.small)
+        table.cell(mosCop, 0, 3, "NEXT      " + cop_next, text_color=color.aqua, text_size=size.small)
+        table.cell(mosCop, 0, 4, "THREAT    " + story_threat, text_color=color.orange, text_size=size.small)
+        table.cell(mosCop, 0, 5, "ACTION    " + cop_action, text_color=color.lime, text_size=size.small)
 
         // ── SECTION 3: ENERGY NETWORK (middle left) — pressure flow ──
         var table mosEng = table.new(position.middle_left, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
@@ -6120,22 +6072,12 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosEng, 0, 4, "State " + energy_state, text_color=(_rotCascade or _rotMature ? #5aff9e : #ffe05a), text_size=size.small)
 
         // ── SECTION 6: OPPORTUNITY REACTOR (middle right) ──
-        var table mosRct = table.new(position.middle_right, 1, 15, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+        var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
         table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
         table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
         table.cell(mosRct, 0, 2, oppState, text_color=color.white, text_size=size.small)
         table.cell(mosRct, 0, 3, "Quality " + tqe_grade, text_color=#5ad1ff, text_size=size.small)
         table.cell(mosRct, 0, 4, _cmdOppClass, text_color=#9fb0d8, text_size=size.small)
-        table.cell(mosRct, 0, 5, "──  TIME (cycle · pos · left)  " + (tieDir == 1 ? "▲" : tieDir == -1 ? "▼" : "—") + "  ──", text_color=#00e5ff, text_size=size.small)
-        table.cell(mosRct, 0, 6, "MN " + f_tieBar(tieMnO, tieMnH, tieMnL) + " " + f_tieIcons(tieMnH > tieMnPH, tieMnL < tieMnPL) + " " + f_tieRem(f_tieEl(tieMnT, "M"), "M"), text_color=f_tieColor(tieMnH > tieMnPH, tieMnL < tieMnPL), text_size=size.small)
-        table.cell(mosRct, 0, 7, "WK " + f_tieBar(tieWO, tieWH, tieWL) + " " + f_tieIcons(tieWH > tieWPH, tieWL < tieWPL) + " " + f_tieRem(f_tieEl(tieWT, "W"), "W"), text_color=f_tieColor(tieWH > tieWPH, tieWL < tieWPL), text_size=size.small)
-        table.cell(mosRct, 0, 8, "D  " + f_tieBar(tieDO, tieDH, tieDL) + " " + f_tieIcons(tieDH > tieDPH, tieDL < tieDPL) + " " + f_tieRem(f_tieEl(tieDT, "D"), "D"), text_color=f_tieColor(tieDH > tieDPH, tieDL < tieDPL), text_size=size.small)
-        table.cell(mosRct, 0, 9, "H4 " + f_tieBar(tieH4O, tieH4H, tieH4L) + " " + f_tieIcons(tieH4H > tieH4PH, tieH4L < tieH4PL) + " " + f_tieRem(f_tieEl(tieH4T, "240"), "240"), text_color=f_tieColor(tieH4H > tieH4PH, tieH4L < tieH4PL), text_size=size.small)
-        table.cell(mosRct, 0, 10, "» H1 " + f_tieBar(tieH1O, tieH1H, tieH1L) + " " + f_tieIcons(tieH1H > tieH1PH, tieH1L < tieH1PL) + " " + f_tieRem(f_tieEl(tieH1T, "60"), "60"), text_color=f_tieColor(tieH1H > tieH1PH, tieH1L < tieH1PL), text_size=size.normal)
-        table.cell(mosRct, 0, 11, "Align " + str.tostring(math.round(tieAlign)) + "%  Conflict " + str.tostring(math.round(tieConflict)) + "%", text_color=(tieAlign >= 60 ? #5aff9e : #ffe05a), text_size=size.small)
-        table.cell(mosRct, 0, 12, "H1 " + tieH1Timing + "  " + str.tostring(math.round(tieLowFirst)) + "% low-first", text_color=color.white, text_size=size.small)
-        table.cell(mosRct, 0, 13, "Seq  " + tieSeq, text_color=#00e5ff, text_size=size.small)
-        table.cell(mosRct, 0, 14, "Paths  " + str.tostring(tieP1) + " / " + str.tostring(tieP2) + " / " + str.tostring(tieP3) + "%", text_color=#b388ff, text_size=size.small)
 
         // (Timeline now covered by the restored P3 dashboard at bottom_center)
 
