@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 23", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 24", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -277,7 +277,16 @@ f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dis
     bool  _accDec = math.abs(_acc) < math.abs(_acc[1])
     [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bCS, _rCS, _bImp, _rImp, _bDec, _rDec, _bMic, _rMic, _vd70, _vd50, _vd85, _vd55x3, _mom, _accDec]
 
-[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, "5", f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
+// ── HTF MEMORY GUARD ─────────────────────────────────────────────────────────
+// On charts ABOVE H1 (H4 / Daily / Weekly …) a request.security() to a LOWER
+// timeframe pulls a massive intrabar count and blows the indicator's memory
+// limit. f_safeTF clamps any requested timeframe UP to the chart timeframe when
+// (and only when) the chart is above H1, so HTF charts request NO lower-TF data.
+// Intraday charts (<= H1) are untouched and keep full M1 / M3 / M5 granularity.
+bool _htfMemGuard = timeframe.in_seconds() > 3600
+f_safeTF(simple string _tf) => _htfMemGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, f_safeTF("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
 
 float convThreshold = atr * convMult
 float atrSma     = ta.sma(atr, 20)
@@ -316,11 +325,11 @@ f_htfBeliefs(float _open, float _high, float _low, float _close,
 
     [_dir, _expScore, _decayScr, _curvScr, _abScr, _liqScr]
 
-[raw_dir_tf1, raw_expScr_tf1, raw_decScr_tf1, raw_curvScr_tf1, raw_abScr_tf1, raw_liqScr_tf1] = request.security(syminfo.tickerid, tf1,
+[raw_dir_tf1, raw_expScr_tf1, raw_decScr_tf1, raw_curvScr_tf1, raw_abScr_tf1, raw_liqScr_tf1] = request.security(syminfo.tickerid, f_safeTF(tf1),
     f_htfBeliefs(open, high, low, close, effThresh, dispThresh, acceptBars, convMult, obLookback),
     lookahead=barmerge.lookahead_off)
 
-[raw_dir_tf2, raw_expScr_tf2, raw_decScr_tf2, raw_curvScr_tf2, raw_abScr_tf2, raw_liqScr_tf2] = request.security(syminfo.tickerid, tf2,
+[raw_dir_tf2, raw_expScr_tf2, raw_decScr_tf2, raw_curvScr_tf2, raw_abScr_tf2, raw_liqScr_tf2] = request.security(syminfo.tickerid, f_safeTF(tf2),
     f_htfBeliefs(open, high, low, close, effThresh, dispThresh, acceptBars, convMult, obLookback),
     lookahead=barmerge.lookahead_off)
 
@@ -345,13 +354,13 @@ f_zoneRange() => [ta.highest(high, 20), ta.lowest(low, 20)]
 
 // each timeframe's recent price range so the L2/L1/L3 layers can be SHOWN
 // spatially on the chart instead of only as numeric dashboard readouts.
-[l2_zoneHigh, l2_zoneLow] = request.security(syminfo.tickerid, tf2,
+[l2_zoneHigh, l2_zoneLow] = request.security(syminfo.tickerid, f_safeTF(tf2),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, tf1,
+[l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, f_safeTF(tf1),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "3",
+[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, f_safeTF("3"),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
 // M1 ("1") and H4 ("240") price ranges — fixed timeframes (match se1 / se240
@@ -766,17 +775,17 @@ f_phaseFamilyCode(int _c) =>
 // These are the ONLY source of structure for M1 / L3 / L0 / L1 / L2 from here on.
 // ═══════════════════════════════════════════════════════════════════════════════
 [se1_dir, se1_ph, se1_sh, se1_sl, se1_psh, se1_psl, se1_bos, se1_ch, se1_p4h, se1_p4l, se1_inv, se1_tgt, se1_ft, se1_fb, se1_fs, se1_wp, se1_cm, se1_mf] =
-     request.security(syminfo.tickerid, "1",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("1"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se3_dir, se3_ph, se3_sh, se3_sl, se3_psh, se3_psl, se3_bos, se3_ch, se3_p4h, se3_p4l, se3_inv, se3_tgt, se3_ft, se3_fb, se3_fs, se3_wp, se3_cm, se3_mf] =
-     request.security(syminfo.tickerid, "3",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("3"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se5_dir, se5_ph, se5_sh, se5_sl, se5_psh, se5_psl, se5_bos, se5_ch, se5_p4h, se5_p4l, se5_inv, se5_tgt, se5_ft, se5_fb, se5_fs, se5_wp, se5_cm, se5_mf] =
-     request.security(syminfo.tickerid, "5",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("5"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se15_dir, se15_ph, se15_sh, se15_sl, se15_psh, se15_psl, se15_bos, se15_ch, se15_p4h, se15_p4l, se15_inv, se15_tgt, se15_ft, se15_fb, se15_fs, se15_wp, se15_cm, se15_mf] =
-     request.security(syminfo.tickerid, "15", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("15"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se60_dir, se60_ph, se60_sh, se60_sl, se60_psh, se60_psl, se60_bos, se60_ch, se60_p4h, se60_p4l, se60_inv, se60_tgt, se60_ft, se60_fb, se60_fs, se60_wp, se60_cm, se60_mf] =
-     request.security(syminfo.tickerid, "60", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("60"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se240_dir, se240_ph, se240_sh, se240_sl, se240_psh, se240_psl, se240_bos, se240_ch, se240_p4h, se240_p4l, se240_inv, se240_tgt, se240_ft, se240_fb, se240_fs, se240_wp, se240_cm, se240_mf] =
-     request.security(syminfo.tickerid, "240", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("240"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 
 // ── Canonical phase strings per fixed layer ──────────────────────────────────
 string m1_phaseCanon = f_phaseStr(int(nz(se1_ph)))
@@ -2238,7 +2247,7 @@ f_m1Physics(float _c, float _h, float _l) =>
     bool _absEmer  = _e < effThresh * 0.5 and _d < dispThresh * 0.6
     [_expWeak, _convEmer, _indEmer, _liqEmer, _absEmer]
 
-[m1_expWeak, m1_convEmer, m1_indEmer, m1_liqEmer, m1_absEmer] = request.security(syminfo.tickerid, "1",
+[m1_expWeak, m1_convEmer, m1_indEmer, m1_liqEmer, m1_absEmer] = request.security(syminfo.tickerid, f_safeTF("1"),
     f_m1Physics(close, high, low), lookahead=barmerge.lookahead_off)
 
 bool m1ExpansionWeak   = int(nz(int(m1_expWeak  ? 1 : 0), 0)) != 0
@@ -3518,9 +3527,9 @@ f_fuPool(simple float _wickFrac) =>
         _bLo := _tip + (_bL - _tip) * 0.38
     [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0]
 
-[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid]  = request.security(syminfo.tickerid, "240", f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid]  = request.security(syminfo.tickerid, "60",  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid] = request.security(syminfo.tickerid, "15",  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
 
 // Recursive alignment % (how many layers carry a live validated FU) and the
 // winning future-magnet target = the HIGHEST timeframe with a valid aligned FU.
