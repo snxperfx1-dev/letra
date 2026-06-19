@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 32", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 33", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3373,8 +3373,8 @@ fuwMinWickFrac = input.float(0.4,  "FU Spike: min wick / range",         group=G
 fuwLookback    = input.int  (3,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
 showFUConv     = input.bool (true, "Show FU Conversation Route (1A.11/1A.12 arrows)", group=GRP_FUOB)
 showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B arrow)", group=GRP_FUOB)
-fuRouteMinConf = input.int  (70,   "FU Route: min path confidence %",    group=GRP_FUOB, minval=0, maxval=100)
-fuAuthMin      = input.int  (60,   "FU Route: min node authority score", group=GRP_FUOB, minval=0, maxval=100)
+fuRouteMinConf = input.int  (35,   "FU Route: min path confidence %",    group=GRP_FUOB, minval=0, maxval=100)
+fuAuthMin      = input.int  (40,   "FU Route: min node authority score", group=GRP_FUOB, minval=0, maxval=100)
 
 var float fuw_tip      = na      // wick extreme (manipulation point)
 var float fuw_bodyHigh = na
@@ -3650,7 +3650,7 @@ if conv_bias != 0
         conv_seekPx := m5_fuTip
         conv_seekTf := "M5"
         conv_seekSc := nz(m5_fuScore)
-float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, fu_recursiveAlign * 0.5 + conv_seekSc * 0.5)
+float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, conv_seekSc * 0.7 + fu_recursiveAlign * 0.3)
 
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
