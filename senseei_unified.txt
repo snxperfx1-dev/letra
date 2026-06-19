@@ -102,7 +102,7 @@ var array<int>   nBar   = array.new_int()
 var array<int>   nRev   = array.new_int()
 
 f_wtTf(int _wt) => _wt == 9 ? "MN" : _wt == 8 ? "W" : _wt == 7 ? "D" : _wt == 6 ? "H4" : _wt == 5 ? "H1" : _wt == 4 ? "M15" : _wt == 3 ? "M5" : _wt == 2 ? "M3" : "M1"
-f_tfColor(int _wt) => _wt == 9 ? color.white : _wt == 8 ? #ffd000 : _wt == 7 ? #ffe96b : _wt == 6 ? #22d3ee : _wt == 5 ? #b388ff : _wt == 4 ? #5a8bff : _wt == 3 ? #5aff9e : _wt == 2 ? #9ef0c0 : color.gray
+f_tfColor(int _wt) => _wt == 9 ? #e2e8f0 : _wt == 8 ? #fbbf24 : _wt == 7 ? #ffe96b : _wt == 6 ? #38bdf8 : _wt == 5 ? #a78bfa : _wt == 4 ? #5a8bff : _wt == 3 ? #34d399 : _wt == 2 ? #9ef0c0 : #475569
 
 f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
     array.push(nPx, _tip)
@@ -297,7 +297,7 @@ f_tBar(float _o, float _h, float _l) =>
         _s := _s + (_i == _pP ? "●" : _i == _oP ? "O" : _i == 0 ? "L" : _i == _w - 1 ? "H" : "-")
     _s
 f_tIcons(bool _ht, bool _lt) => (_ht ? "↑✓" : "↑?") + (_lt ? "↓✓" : "↓?")
-f_tCol(bool _ht, bool _lt) => (_ht and _lt) ? color.gray : _ht ? #5aff9e : _lt ? #ff5a5a : color.yellow
+f_tCol(bool _ht, bool _lt) => (_ht and _lt) ? #475569 : _ht ? #34d399 : _lt ? #fb7185 : #fbbf24
 f_tRem(float _el, simple string _tf) =>
     float _r = (1.0 - _el) * timeframe.in_seconds(_tf)
     _r >= 86400 ? str.tostring(math.round(_r / 86400.0)) + "d" : _r >= 3600 ? str.tostring(math.round(_r / 3600.0)) + "h" : str.tostring(math.round(_r / 60.0)) + "m"
@@ -335,6 +335,29 @@ int   tP2 = math.max(0, 100 - tP1 - tP3)
 string tStack = f_tTag(tMnO, "MN") + " " + f_tTag(tWO, "W") + " " + f_tTag(tDO, "D") + " " + f_tTag(tH4O, "H4") + " " + f_tTag(tH1O, "H1")
 string tSeq = (not tH1Lt ? "H1 low sweep" : not tH1Ht ? "H1 high sweep" : "H1 complete") + " -> H4 " + (f_tBias(tH4O) == 1 ? "up" : "down") + " -> D " + (f_tBias(tDO) == 1 ? "highs" : "lows") + " -> W " + (f_tBias(tWO) == 1 ? "highs" : "lows")
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARKET CONTEXT ENGINES — more of Letra's contextual intelligence, reconstructed
+// internally: Regime · Momentum · Volatility · Liquidity sweep · Energy Dissipation
+// (EDE) · HTF/LTF Fusion. These give Senseei the "where are we, structurally" read.
+// ═══════════════════════════════════════════════════════════════════════════════
+float _ctxSpread = (ta.ema(close, 20) - _ema50) / math.max(_atr, 1e-10)
+float ctxTrend   = math.min(100.0, math.abs(_ctxSpread) * 40.0)
+string ctxRegime = ctxTrend > 50 ? (_ctxSpread > 0 ? "TRENDING UP" : "TRENDING DOWN") : ctxTrend > 25 ? "WEAK TREND" : "RANGING"
+float  _ctxMom   = (close - close[5]) / math.max(_atr, 1e-10)
+string ctxMom    = _ctxMom > 1.5 ? "STRONG UP" : _ctxMom > 0.5 ? "UP" : _ctxMom < -1.5 ? "STRONG DOWN" : _ctxMom < -0.5 ? "DOWN" : "FLAT"
+float  _ctxVR    = ta.atr(14) / math.max(ta.atr(50), 1e-10)
+string ctxVol    = _ctxVR > 1.3 ? "EXPANDING" : _ctxVR < 0.8 ? "CONTRACTING" : "NORMAL"
+bool   _ctxSwHi  = high > ta.highest(high, 20)[1] and close < ta.highest(high, 20)[1]
+bool   _ctxSwLo  = low  < ta.lowest(low, 20)[1]  and close > ta.lowest(low, 20)[1]
+var int _ctxSweep = 0
+if _ctxSwHi
+    _ctxSweep := 1
+if _ctxSwLo
+    _ctxSweep := -1
+string ctxLiq    = _ctxSweep == 1 ? "BUY-SIDE SWEPT" : _ctxSweep == -1 ? "SELL-SIDE SWEPT" : "none"
+float  ctxDissip = math.min(100.0, waveProgress * 0.6 + (inducHit ? 30.0 : 0.0))
+string ctxFusion = stackDir == 0 ? "Mixed" : stackDir == waveDir ? "HTF + LTF aligned" : "HTF intact · LTF counter"
+
 // ── Drawing objects + hoisted state for global alerts ────────────────────────
 var array<line>  net_lines = array.new<line>()
 var array<label> net_lbls  = array.new<label>()
@@ -343,6 +366,7 @@ var box          fezBox    = na
 var label        vLbl      = na
 var table        readout   = na
 var table        strat     = na
+var table        ctxPanel  = na
 var int    gMaster   = 0
 var float  gConflict = 0.0
 var string gAction   = "WAIT"
@@ -416,11 +440,11 @@ if barstate.islast
                 if showNet
                     color _bc = f_tfColor(_wt)
                     array.push(net_lines, line.new(bar_index - 1, _np, bar_index + 10, _np, color = color.new(_bc, _st == 0 ? 25 : 70), width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
-                    array.push(net_lbls, label.new(bar_index + 10, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 25), textcolor = _st == 0 ? _bc : color.gray, size = size.tiny))
+                    array.push(net_lbls, label.new(bar_index + 10, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 25), textcolor = _st == 0 ? _bc : #475569, size = size.tiny))
 
     // ── FEZ corridor ─────────────────────────────────────────────────────────
     if showFEZ and not na(_fezHi) and not na(_fezLo)
-        fezBox := box.new(bar_index - 1, _fezHi, bar_index + 10, _fezLo, border_color = color.new(#7b2fff, 45), border_width = 1, bgcolor = color.new(#7b2fff, 90))
+        fezBox := box.new(bar_index - 1, _fezHi, bar_index + 10, _fezLo, border_color = color.new(#6366f1, 45), border_width = 1, bgcolor = color.new(#6366f1, 90))
 
     // ── Conversation web (clean dashed, right margin) ────────────────────────
     if showWeb and array.size(nPx) > 0
@@ -522,75 +546,75 @@ if barstate.islast
     array<int> _fwd = f_pathNodes(true)
     int _nextIdx = array.size(_fwd) > 0 ? array.get(_fwd, 0) : -1
 
-    color vCol = master == 1 ? #00e676 : master == -1 ? #ff5252 : color.gray
-    color aCol = action == "ATTACK" ? #00e676 : action == "PREPARE" ? color.yellow : str.startswith(action, "MANAGE") ? #29b6f6 : color.gray
+    color vCol = master == 1 ? #34d399 : master == -1 ? #fb7185 : #475569
+    color aCol = action == "ATTACK" ? #34d399 : action == "PREPARE" ? #fbbf24 : str.startswith(action, "MANAGE") ? #29b6f6 : #475569
 
     // ── Verdict label ─────────────────────────────────────────────────────────
     if showVerdict
         if not na(vLbl)
             label.delete(vLbl)
-        vLbl := label.new(bar_index + 3, close, "SENSEEI  " + action + "   " + intent + "  " + str.tostring(math.round(confidence)) + "%", style = label.style_label_left, color = color.new(aCol, 8), textcolor = color.white, size = size.large)
+        vLbl := label.new(bar_index + 3, close, "SENSEEI  " + action + "   " + intent + "  " + str.tostring(math.round(confidence)) + "%", style = label.style_label_left, color = color.new(aCol, 8), textcolor = #e2e8f0, size = size.large)
 
     // ══════════════════════════════════════════════════════════════════════════
     // PART E — PANELS
     // ══════════════════════════════════════════════════════════════════════════
     if showReadout
         if na(readout)
-            readout := table.new(position.top_right, 2, 12, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
-        table.cell(readout, 0, 0, "ENGINE READOUT", text_color = color.white, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#22d3ee, 68))
-        table.cell(readout, 1, 0, _liveDot, text_color = _pulse ? #00e676 : color.gray, text_size = size.normal, bgcolor = color.new(#22d3ee, 68))
-        table.cell(readout, 0, 1, "Letra · Wave", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 1, (waveDir == 1 ? "▲ " : waveDir == -1 ? "▼ " : "— ") + wavePhase, text_color = waveDir == 1 ? #5aff9e : waveDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
-        table.cell(readout, 0, 2, "Letra · Wave progress", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 2, str.tostring(math.round(waveProgress)) + "%  → " + str.tostring(math.round_to_mintick(waveObj)), text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 3, "Letra · Stack", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 3, (stackDir == 1 ? "▲ " : stackDir == -1 ? "▼ " : "— ") + str.tostring(math.round(stackPct)) + "%", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 4, "Letra · Resolution", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 4, resCode == 2 ? "RESOLVED" : resCode == 1 ? "PARTIAL" : "UNRESOLVED", text_color = resCode == 0 ? #ff8a8a : resCode == 1 ? color.yellow : #00e676, text_size = size.small)
-        table.cell(readout, 0, 5, "Letra · Residual", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 5, str.tostring(math.round(residual)) + "%", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 6, "Letra · Attractor", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 6, str.tostring(math.round(attractor)) + "  " + f_cpNode(_attrIdx), text_color = #ffd000, text_size = size.small)
-        table.cell(readout, 0, 7, "Network · Bias", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 7, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ —", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.small)
-        table.cell(readout, 0, 8, "Network · Nodes", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 8, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 9, "Network · Pressure", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 9, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #5aff9e : pdir == -1 ? #ff5a5a : color.gray, text_size = size.small)
-        table.cell(readout, 0, 10, "Letra · Invalidation", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 10, na(waveOrigin) ? "—" : str.tostring(math.round_to_mintick(waveOrigin)), text_color = #ff8a8a, text_size = size.small)
-        table.cell(readout, 0, 11, "Letra · Rotation", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 11, timeConflict >= 50 ? "ROTATING" : "ALIGNED", text_color = timeConflict >= 50 ? color.yellow : #5aff9e, text_size = size.small)
+            readout := table.new(position.top_right, 2, 12, bgcolor = color.new(#0d1117, 6), frame_color = color.new(#38bdf8, 30), frame_width = 2, border_width = 0)
+        table.cell(readout, 0, 0, "ENGINE READOUT", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#38bdf8, 68))
+        table.cell(readout, 1, 0, _liveDot, text_color = _pulse ? #34d399 : #475569, text_size = size.normal, bgcolor = color.new(#38bdf8, 68))
+        table.cell(readout, 0, 1, "Letra · Wave", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 1, (waveDir == 1 ? "▲ " : waveDir == -1 ? "▼ " : "— ") + wavePhase, text_color = waveDir == 1 ? #34d399 : waveDir == -1 ? #fb7185 : #475569, text_size = size.small)
+        table.cell(readout, 0, 2, "Letra · Wave progress", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 2, str.tostring(math.round(waveProgress)) + "%  → " + str.tostring(math.round_to_mintick(waveObj)), text_color = #e2e8f0, text_size = size.small)
+        table.cell(readout, 0, 3, "Letra · Stack", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 3, (stackDir == 1 ? "▲ " : stackDir == -1 ? "▼ " : "— ") + str.tostring(math.round(stackPct)) + "%", text_color = #e2e8f0, text_size = size.small)
+        table.cell(readout, 0, 4, "Letra · Resolution", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 4, resCode == 2 ? "RESOLVED" : resCode == 1 ? "PARTIAL" : "UNRESOLVED", text_color = resCode == 0 ? #fda4af : resCode == 1 ? #fbbf24 : #34d399, text_size = size.small)
+        table.cell(readout, 0, 5, "Letra · Residual", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 5, str.tostring(math.round(residual)) + "%", text_color = #e2e8f0, text_size = size.small)
+        table.cell(readout, 0, 6, "Letra · Attractor", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 6, str.tostring(math.round(attractor)) + "  " + f_cpNode(_attrIdx), text_color = #fbbf24, text_size = size.small)
+        table.cell(readout, 0, 7, "Network · Bias", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 7, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ —", text_color = netBias == 1 ? #34d399 : netBias == -1 ? #fb7185 : #475569, text_size = size.small)
+        table.cell(readout, 0, 8, "Network · Nodes", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 8, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = #e2e8f0, text_size = size.small)
+        table.cell(readout, 0, 9, "Network · Pressure", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 9, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #34d399 : pdir == -1 ? #fb7185 : #475569, text_size = size.small)
+        table.cell(readout, 0, 10, "Letra · Invalidation", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 10, na(waveOrigin) ? "—" : str.tostring(math.round_to_mintick(waveOrigin)), text_color = #fda4af, text_size = size.small)
+        table.cell(readout, 0, 11, "Letra · Rotation", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 11, timeConflict >= 50 ? "ROTATING" : "ALIGNED", text_color = timeConflict >= 50 ? #fbbf24 : #34d399, text_size = size.small)
 
     if showStrat
         if na(strat)
-            strat := table.new(position.top_left, 2, 22, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
-        table.cell(strat, 0, 0, "◆ SENSEEI  " + _liveDot, text_color = color.white, text_size = size.large, text_halign = text.align_left, bgcolor = color.new(#7b2fff, 65))
-        table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = color.white, text_size = size.large, bgcolor = color.new(vCol, 50))
-        table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#ff7fe6, 90))
+            strat := table.new(position.top_left, 2, 22, bgcolor = color.new(#0d1117, 4), frame_color = color.new(#fbbf24, 30), frame_width = 2, border_width = 0)
+        table.cell(strat, 0, 0, "◆ SENSEEI  " + _liveDot, text_color = #e2e8f0, text_size = size.large, text_halign = text.align_left, bgcolor = color.new(#6366f1, 65))
+        table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = #e2e8f0, text_size = size.large, bgcolor = color.new(vCol, 50))
+        table.cell(strat, 0, 1, "CURRENT STORY", text_color = #c084fc, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#c084fc, 90))
         table.cell(strat, 1, 1, "", text_size = size.small)
-        table.cell(strat, 0, 2, story, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 0, 2, story, text_color = #cbd5e1, text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 2, "", text_size = size.small)
-        table.cell(strat, 0, 3, "WHAT MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 0, 3, "WHAT MATTERS", text_color = #c084fc, text_size = size.small, text_halign = text.align_left)
         table.cell(strat, 1, 3, "", text_size = size.small)
-        table.cell(strat, 0, 4, matters, text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 0, 4, matters, text_color = #5eead4, text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 4, "", text_size = size.small)
-        table.cell(strat, 0, 5, "WHAT NO LONGER MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 0, 5, "WHAT NO LONGER MATTERS", text_color = #c084fc, text_size = size.small, text_halign = text.align_left)
         table.cell(strat, 1, 5, "", text_size = size.small)
-        table.cell(strat, 0, 6, nomatter, text_color = color.new(color.silver, 15), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 0, 6, nomatter, text_color = color.new(#94a3b8, 15), text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 6, "", text_size = size.small)
-        table.cell(strat, 0, 7, "PRIMARY INTENT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 7, intent, text_color = color.white, text_size = size.normal, bgcolor = color.new(vCol, 75))
-        table.cell(strat, 0, 8, "ALIGN / CONFLICT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 8, f_gauge(alignment) + "  " + str.tostring(math.round(alignment)) + "/" + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #00e676 : color.yellow, text_size = size.normal)
-        table.cell(strat, 0, 9, "CONFIDENCE / THREAT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 9, f_gauge(confidence) + "  " + str.tostring(math.round(confidence)) + "/" + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #00e676 : color.yellow, text_size = size.normal)
-        table.cell(strat, 0, 10, "OPPORTUNITY / TIMING", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = color.white, text_size = size.normal, bgcolor = color.new(opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : opportunity == "GOOD" ? color.yellow : #555a6e, 72))
-        table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 11, "  " + action + "  ", text_color = color.white, text_size = size.large, bgcolor = color.new(aCol, 40))
-        table.cell(strat, 0, 12, "─ TEMPORAL CYCLES (cycle · pos · left) ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(#00e5ff, 88))
-        table.cell(strat, 1, 12, timeDir == 1 ? "▲" : timeDir == -1 ? "▼" : "—", text_color = timeDir == 1 ? #5aff9e : timeDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(strat, 0, 7, "PRIMARY INTENT", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 7, intent, text_color = #e2e8f0, text_size = size.normal, bgcolor = color.new(vCol, 75))
+        table.cell(strat, 0, 8, "ALIGN / CONFLICT", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 8, f_gauge(alignment) + "  " + str.tostring(math.round(alignment)) + "/" + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #34d399 : #fbbf24, text_size = size.normal)
+        table.cell(strat, 0, 9, "CONFIDENCE / THREAT", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 9, f_gauge(confidence) + "  " + str.tostring(math.round(confidence)) + "/" + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #34d399 : #fbbf24, text_size = size.normal)
+        table.cell(strat, 0, 10, "OPPORTUNITY / TIMING", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = #e2e8f0, text_size = size.normal, bgcolor = color.new(opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #34d399 : opportunity == "GOOD" ? #fbbf24 : #334155, 72))
+        table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 11, "  " + action + "  ", text_color = #e2e8f0, text_size = size.large, bgcolor = color.new(aCol, 40))
+        table.cell(strat, 0, 12, "─ TEMPORAL CYCLES (cycle · pos · left) ─", text_color = #38bdf8, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(#38bdf8, 88))
+        table.cell(strat, 1, 12, timeDir == 1 ? "▲" : timeDir == -1 ? "▼" : "—", text_color = timeDir == 1 ? #34d399 : timeDir == -1 ? #fb7185 : #475569, text_size = size.small)
         table.cell(strat, 0, 13, "MN " + f_tBar(tMnO, tMnH, tMnL), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 13, f_tIcons(tMnHt, tMnLt) + " " + f_tRem(f_tEl(tMnT, "M"), "M"), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal)
         table.cell(strat, 0, 14, "WK " + f_tBar(tWO, tWH, tWL), text_color = f_tCol(tWHt, tWLt), text_size = size.normal, text_halign = text.align_left)
@@ -601,14 +625,33 @@ if barstate.islast
         table.cell(strat, 1, 16, f_tIcons(tH4Ht, tH4Lt) + " " + f_tRem(f_tEl(tH4T, "240"), "240"), text_color = f_tCol(tH4Ht, tH4Lt), text_size = size.normal)
         table.cell(strat, 0, 17, "» H1 " + f_tBar(tH1O, tH1H, tH1L), text_color = f_tCol(tH1Ht, tH1Lt), text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 17, f_tIcons(tH1Ht, tH1Lt) + " " + f_tRem(f_tEl(tH1T, "60"), "60"), text_color = f_tCol(tH1Ht, tH1Lt), text_size = size.normal)
-        table.cell(strat, 0, 18, "Align / Conflict", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 18, str.tostring(math.round(timeAlign)) + "% / " + str.tostring(math.round(timeConflict)) + "%", text_color = timeAlign >= 60 ? #5aff9e : color.yellow, text_size = size.normal)
-        table.cell(strat, 0, 19, "H1 timing", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 19, h1Timing + "  " + str.tostring(math.round(h1LowProb)) + "% low", text_color = color.white, text_size = size.normal)
-        table.cell(strat, 0, 20, "Sequence", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 20, tSeq, text_color = #00e5ff, text_size = size.normal)
-        table.cell(strat, 0, 21, "Paths  A / B / C", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 21, str.tostring(tP1) + "% / " + str.tostring(tP2) + "% / " + str.tostring(tP3) + "%", text_color = #b388ff, text_size = size.normal)
+        table.cell(strat, 0, 18, "Align / Conflict", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 18, str.tostring(math.round(timeAlign)) + "% / " + str.tostring(math.round(timeConflict)) + "%", text_color = timeAlign >= 60 ? #34d399 : #fbbf24, text_size = size.normal)
+        table.cell(strat, 0, 19, "H1 timing", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 19, h1Timing + "  " + str.tostring(math.round(h1LowProb)) + "% low", text_color = #e2e8f0, text_size = size.normal)
+        table.cell(strat, 0, 20, "Sequence", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 20, tSeq, text_color = #38bdf8, text_size = size.normal)
+        table.cell(strat, 0, 21, "Paths  A / B / C", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 21, str.tostring(tP1) + "% / " + str.tostring(tP2) + "% / " + str.tostring(tP3) + "%", text_color = #a78bfa, text_size = size.normal)
+
+    // ── MARKET CONTEXT panel (bottom-left) — Letra structural context engines ──
+    if showStrat
+        if na(ctxPanel)
+            ctxPanel := table.new(position.bottom_left, 2, 7, bgcolor = color.new(#0d1117, 4), frame_color = color.new(#38bdf8, 30), frame_width = 2, border_width = 0)
+        table.cell(ctxPanel, 0, 0, "MARKET CONTEXT", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 0, _liveDot, text_color = _pulse ? #34d399 : #475569, text_size = size.normal)
+        table.cell(ctxPanel, 0, 1, "Regime", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 1, ctxRegime, text_color = #e2e8f0, text_size = size.normal, bgcolor = color.new(ctxTrend > 50 ? (_ctxSpread > 0 ? #34d399 : #fb7185) : #334155, 74))
+        table.cell(ctxPanel, 0, 2, "Momentum", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 2, ctxMom, text_color = str.contains(ctxMom, "UP") ? #34d399 : str.contains(ctxMom, "DOWN") ? #fb7185 : #94a3b8, text_size = size.normal)
+        table.cell(ctxPanel, 0, 3, "Volatility", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 3, ctxVol, text_color = ctxVol == "EXPANDING" ? #38bdf8 : ctxVol == "CONTRACTING" ? #fbbf24 : #e2e8f0, text_size = size.normal)
+        table.cell(ctxPanel, 0, 4, "Liquidity", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 4, ctxLiq, text_color = ctxLiq == "none" ? #475569 : #fbbf24, text_size = size.normal)
+        table.cell(ctxPanel, 0, 5, "Dissipation (EDE)", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 5, f_gauge(ctxDissip) + " " + str.tostring(math.round(ctxDissip)) + "%", text_color = #a78bfa, text_size = size.normal)
+        table.cell(ctxPanel, 0, 6, "HTF / LTF Fusion", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(ctxPanel, 1, 6, ctxFusion, text_color = ctxFusion == "HTF + LTF aligned" ? #34d399 : #e2e8f0, text_size = size.normal)
 
 // ── Alerts (global scope) ─────────────────────────────────────────────────────
 alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")
