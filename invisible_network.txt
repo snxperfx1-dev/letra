@@ -20,7 +20,8 @@ int    authMin      = input.int  (45,  "Min node authority to show",        grou
 int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
 int    nodeMax      = input.int  (64,  "Max remembered nodes",              group = GRP, minval = 10, maxval = 200)
 bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
-bool   showRoute    = input.bool (true,  "Show conversation route (arrows)",group = GRP)
+bool   showCurPath  = input.bool (true,  "Show CURRENT path (forward route)",group = GRP)
+bool   showPrevPath = input.bool (true,  "Show PREVIOUS path (trail behind)",group = GRP)
 bool   showPanel    = input.bool (true,  "Show conversation panel",         group = GRP)
 int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
 int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
@@ -187,11 +188,39 @@ f_magnet(int _i) =>
     float _ub = array.get(nRev, _i) == 0 ? 10.0 : math.min(20.0, array.get(nRev, _i) * 3.0)
     f_auth(_i) * 0.5 + _db + _ab + _ub
 
+// Collect eligible open nodes on one side of price, sorted nearest-first.
+//   _aheadSide = true  → nodes in the bias direction (where price is GOING)
+//   _aheadSide = false → nodes opposite the bias (the trail price CAME FROM)
+f_pathNodes(bool _aheadSide) =>
+    array<int> _r = array.new_int()
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            float _np    = array.get(nPx, _i)
+            bool  _ahead = netBias == 1 ? _np > close : _np < close
+            if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin and (_aheadSide ? _ahead : not _ahead)
+                array.push(_r, _i)
+    if array.size(_r) > 1
+        for _a = 1 to array.size(_r) - 1
+            int   _key = array.get(_r, _a)
+            float _kd  = math.abs(close - array.get(nPx, _key))
+            int   _b   = _a - 1
+            bool  _go  = _b >= 0
+            while _go
+                if math.abs(close - array.get(nPx, array.get(_r, _b))) > _kd
+                    array.set(_r, _b + 1, array.get(_r, _b))
+                    _b -= 1
+                    _go := _b >= 0
+                else
+                    _go := false
+            array.set(_r, _b + 1, _key)
+    _r
+
 // ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
 var array<line>  route_lines = array.new<line>()
 var array<line>  level_lines = array.new<line>()
 var array<label> level_lbls  = array.new<label>()
 var label        route_lbl   = na
+var label        prev_lbl    = na
 var table        netPanel    = na
 
 if barstate.islast
@@ -209,6 +238,8 @@ if barstate.islast
         array.clear(level_lbls)
     if not na(route_lbl)
         label.delete(route_lbl)
+    if not na(prev_lbl)
+        label.delete(prev_lbl)
 
     // ── Network levels + tallies (open/consumed counts, route inputs) ────────
     int   _activeAligned = 0
@@ -238,28 +269,14 @@ if barstate.islast
                     if _a > _topAuth
                         _topAuth := _a
 
-    // ── Route: bias-side active nodes, nearest-first → arrows + dominant path ─
+    // ── Routes: CURRENT path (forward, bias side) + PREVIOUS path (trail) ────
     float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
     string _domPath = "—"
-    if showRoute and netBias != 0 and _routeConf >= routeMinConf and array.size(nPx) > 0
-        array<int> _ri = array.new_int()
-        for _i = 0 to array.size(nPx) - 1
-            if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin and (netBias == 1 ? array.get(nPx, _i) > close : array.get(nPx, _i) < close)
-                array.push(_ri, _i)
-        if array.size(_ri) > 1
-            for _a = 1 to array.size(_ri) - 1
-                int   _key = array.get(_ri, _a)
-                float _kd  = math.abs(close - array.get(nPx, _key))
-                int   _b   = _a - 1
-                bool  _go  = _b >= 0
-                while _go
-                    if math.abs(close - array.get(nPx, array.get(_ri, _b))) > _kd
-                        array.set(_ri, _b + 1, array.get(_ri, _b))
-                        _b -= 1
-                        _go := _b >= 0
-                    else
-                        _go := false
-                array.set(_ri, _b + 1, _key)
+
+    // CURRENT path — where price is going: chain forward (to the right) through
+    // bias-side open nodes, nearest-first, as connected purple arrows.
+    if showCurPath and netBias != 0 and _routeConf >= routeMinConf
+        array<int> _ri = f_pathNodes(true)
         if array.size(_ri) > 0
             int   _x = bar_index
             float _y = close
@@ -267,12 +284,28 @@ if barstate.islast
             for _i = 0 to array.size(_ri) - 1
                 int   _idx = array.get(_ri, _i)
                 float _n   = array.get(nPx, _idx)
-                int   _x2  = _x + 10
+                int   _x2  = _x + 9
                 array.push(route_lines, line.new(_x, _y, _x2, _n, color = color.new(#b388ff, 0), width = 2, style = line.style_arrow_right))
                 _x := _x2
                 _y := _n
                 _domPath := _domPath + " → " + f_wtTf(array.get(nWt, _idx))
-            route_lbl := label.new(_x, _y, "ROUTE  " + str.tostring(math.round(_routeConf)) + "%  →  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_left, color = color.new(#7b2fff, 5), textcolor = color.white, size = size.normal)
+            route_lbl := label.new(_x, _y, "CURRENT  " + str.tostring(math.round(_routeConf)) + "%  →  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_left, color = color.new(#7b2fff, 5), textcolor = color.white, size = size.normal)
+
+    // PREVIOUS path — the trail price came from: chain backward (to the left)
+    // through the open nodes behind price, nearest-first, as dim cyan arrows.
+    if showPrevPath and netBias != 0
+        array<int> _pi = f_pathNodes(false)
+        if array.size(_pi) > 0
+            int   _x = bar_index
+            float _y = close
+            for _i = 0 to array.size(_pi) - 1
+                int   _idx = array.get(_pi, _i)
+                float _n   = array.get(nPx, _idx)
+                int   _x2  = _x - 9
+                array.push(route_lines, line.new(_x2, _n, _x, _y, color = color.new(#26c6da, 15), width = 2, style = line.style_arrow_right))
+                _x := _x2
+                _y := _n
+            prev_lbl := label.new(_x, _y, "TRAIL  ←  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_right, color = color.new(#0d5b66, 5), textcolor = #aef3fb, size = size.small)
 
     // ── Conversation panel ──────────────────────────────────────────────────
     if showPanel
