@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 29", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 30", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -6039,7 +6039,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosCtl, 0, 8, control_state + "  ·  " + control_transfer, text_color=color.white, text_size=size.small)
 
         // ── SECTION 5: DESTINATION WAR (top right) — candidate competition ──
-        var table mosWar = table.new(position.top_right, 1, 9, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+        var table mosWar = table.new(position.top_right, 1, 6, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
         table.cell(mosWar, 0, 0, "═══  DESTINATION WAR  ═══", text_color=#00e5ff, text_size=size.small)
         table.cell(mosWar, 0, 1, na(dc_bestPrice) ? "No active competition" : ("WINNER  " + dc_bestType), text_color=#5aff9e, text_size=size.small)
         table.cell(mosWar, 0, 2, na(dc_bestPrice) ? "-" : (_mosDestPx + "   " + tpl_winnerClass + "   " + war_state), text_color=color.white, text_size=size.small)
@@ -6047,9 +6047,6 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosWar, 0, 4, "─ field ─", text_color=#7a86a8, text_size=size.tiny)
         table.cell(mosWar, 0, 5, dc_scoreboard, text_color=#b8c4e0, text_size=size.tiny)
 
-        table.cell(mosWar, 0, 6, "─  FU MAP  ─   H4 " + (nz(h4_fuValid) == 1 ? "●" : "·") + " H1 " + (nz(h1_fuValid) == 1 ? "●" : "·") + " M15 " + (nz(m15_fuValid) == 1 ? "●" : "·") + " M5 " + (fuw_valid ? "●" : "·"), text_color=#ff7fe6, text_size=size.tiny)
-        table.cell(mosWar, 0, 7, (na(fu_winTarget) ? "Magnet —" : ("Magnet " + f_v72_px(fu_winTarget) + " " + fu_winSrc)) + "   Align " + str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#ffd000, text_size=size.small)
-        table.cell(mosWar, 0, 8, fuw_inductionExpected ? "Induction expected (midpoint)" : "Awaiting midpoint entry", text_color=#ffb347, text_size=size.small)
 
         // ── SECTION 7: THREAT MATRIX (bottom left) ──
         var table mosThr = table.new(position.bottom_left, 1, 3, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
