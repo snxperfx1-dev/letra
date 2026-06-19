@@ -301,6 +301,16 @@ f_tCol(bool _ht, bool _lt) => (_ht and _lt) ? color.gray : _ht ? #5aff9e : _lt ?
 f_tRem(float _el, simple string _tf) =>
     float _r = (1.0 - _el) * timeframe.in_seconds(_tf)
     _r >= 86400 ? str.tostring(math.round(_r / 86400.0)) + "d" : _r >= 3600 ? str.tostring(math.round(_r / 3600.0)) + "h" : str.tostring(math.round(_r / 60.0)) + "m"
+// ── Modern gauge bar (▰▰▰▰▱▱▱▱) for 0-100 metrics + a live pulse that blinks on
+//    realtime ticks so the panel feels alive. ──────────────────────────────────
+f_gauge(float _pct) =>
+    int    _n = math.max(0, math.min(8, math.round(_pct / 12.5)))
+    string _s = ""
+    for _i = 0 to 7
+        _s := _s + (_i < _n ? "▰" : "▱")
+    _s
+bool   _pulse   = (int(timenow / 800) % 2) == 0
+string _liveDot = _pulse ? "●" : "◌"
 
 bool tMnHt = tMnH > tMnPH
 bool tMnLt = tMnL < tMnPL
@@ -527,8 +537,8 @@ if barstate.islast
     if showReadout
         if na(readout)
             readout := table.new(position.top_right, 2, 12, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
-        table.cell(readout, 0, 0, "ENGINE READOUT", text_color = #22d3ee, text_size = size.normal, text_halign = text.align_left)
-        table.cell(readout, 1, 0, "", text_size = size.small)
+        table.cell(readout, 0, 0, "ENGINE READOUT", text_color = color.white, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#22d3ee, 68))
+        table.cell(readout, 1, 0, _liveDot, text_color = _pulse ? #00e676 : color.gray, text_size = size.normal, bgcolor = color.new(#22d3ee, 68))
         table.cell(readout, 0, 1, "Letra · Wave", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
         table.cell(readout, 1, 1, (waveDir == 1 ? "▲ " : waveDir == -1 ? "▼ " : "— ") + wavePhase, text_color = waveDir == 1 ? #5aff9e : waveDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
         table.cell(readout, 0, 2, "Letra · Wave progress", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
@@ -555,9 +565,9 @@ if barstate.islast
     if showStrat
         if na(strat)
             strat := table.new(position.top_left, 2, 22, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
-        table.cell(strat, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
-        table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = vCol, text_size = size.large)
-        table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 0, 0, "◆ SENSEEI  " + _liveDot, text_color = color.white, text_size = size.large, text_halign = text.align_left, bgcolor = color.new(#7b2fff, 65))
+        table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = color.white, text_size = size.large, bgcolor = color.new(vCol, 50))
+        table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#ff7fe6, 90))
         table.cell(strat, 1, 1, "", text_size = size.small)
         table.cell(strat, 0, 2, story, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 2, "", text_size = size.small)
@@ -570,16 +580,16 @@ if barstate.islast
         table.cell(strat, 0, 6, nomatter, text_color = color.new(color.silver, 15), text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 6, "", text_size = size.small)
         table.cell(strat, 0, 7, "PRIMARY INTENT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 7, intent, text_color = vCol, text_size = size.normal)
+        table.cell(strat, 1, 7, intent, text_color = color.white, text_size = size.normal, bgcolor = color.new(vCol, 75))
         table.cell(strat, 0, 8, "ALIGN / CONFLICT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 8, str.tostring(math.round(alignment)) + "% / " + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #00e676 : color.yellow, text_size = size.normal)
+        table.cell(strat, 1, 8, f_gauge(alignment) + "  " + str.tostring(math.round(alignment)) + "/" + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #00e676 : color.yellow, text_size = size.normal)
         table.cell(strat, 0, 9, "CONFIDENCE / THREAT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 9, str.tostring(math.round(confidence)) + "% / " + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #00e676 : color.yellow, text_size = size.normal)
+        table.cell(strat, 1, 9, f_gauge(confidence) + "  " + str.tostring(math.round(confidence)) + "/" + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #00e676 : color.yellow, text_size = size.normal)
         table.cell(strat, 0, 10, "OPPORTUNITY / TIMING", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : color.white, text_size = size.normal)
-        table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = #ffd000, text_size = size.normal, text_halign = text.align_left)
-        table.cell(strat, 1, 11, action, text_color = aCol, text_size = size.large)
-        table.cell(strat, 0, 12, "─ TEMPORAL CYCLES (cycle · pos · left) ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = color.white, text_size = size.normal, bgcolor = color.new(opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : opportunity == "GOOD" ? color.yellow : #555a6e, 72))
+        table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 11, "  " + action + "  ", text_color = color.white, text_size = size.large, bgcolor = color.new(aCol, 40))
+        table.cell(strat, 0, 12, "─ TEMPORAL CYCLES (cycle · pos · left) ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(#00e5ff, 88))
         table.cell(strat, 1, 12, timeDir == 1 ? "▲" : timeDir == -1 ? "▼" : "—", text_color = timeDir == 1 ? #5aff9e : timeDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
         table.cell(strat, 0, 13, "MN " + f_tBar(tMnO, tMnH, tMnL), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 13, f_tIcons(tMnHt, tMnLt) + " " + f_tRem(f_tEl(tMnT, "M"), "M"), text_color = f_tCol(tMnHt, tMnLt), text_size = size.normal)
