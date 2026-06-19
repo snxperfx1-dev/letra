@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 40", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 41", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -6242,52 +6242,4 @@ plot(re_recursiveCompletionScore, "Letra Completion", color=color.new(color.whit
 // likely temporal SEQUENCE. Structure determines WHERE; time determines WHEN.
 // (5 added request.security calls — compact, panel-only; gated by a toggle.)
 // ═══════════════════════════════════════════════════════════════════════════════
-bool showTIE = input.bool(true, "Show Time Intelligence panel (Engine 8.0)", group = "Engine 8.0 — Time Intelligence")
-
-[tieMnO, tieMnH, tieMnL, tieMnPH, tieMnPL, tieMnT] = request.security(syminfo.tickerid, "M",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieWO,  tieWH,  tieWL,  tieWPH,  tieWPL,  tieWT]  = request.security(syminfo.tickerid, "W",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieDO,  tieDH,  tieDL,  tieDPH,  tieDPL,  tieDT]  = request.security(syminfo.tickerid, "D",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieH4O, tieH4H, tieH4L, tieH4PH, tieH4PL, tieH4T] = request.security(syminfo.tickerid, "240", [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-[tieH1O, tieH1H, tieH1L, tieH1PH, tieH1PL, tieH1T] = request.security(syminfo.tickerid, "60",  [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
-
-f_tieEl(int _t, simple string _tf) => math.min(1.0, math.max(0.0, (float(timenow) - float(_t)) / (timeframe.in_seconds(_tf) * 1000.0)))
-f_tieState(bool _ht, bool _lt, float _el) => (_ht and _lt) ? "DUAL DONE" : _ht ? "HIGH DONE" : _lt ? "LOW DONE" : _el < 0.15 ? "OPENING" : _el < 0.6 ? "EXPANDING" : _el < 0.9 ? "MID CYCLE" : "TERMINAL"
-f_tieComp(bool _ht, bool _lt, float _el) => (_ht and _lt) ? 95.0 : (_ht or _lt) ? 45.0 : math.round(_el * 15.0)
-f_tieRow(float _o, float _h, float _l, float _ph, float _pl, float _el) =>
-    bool _ht = _h > _ph
-    bool _lt = _l < _pl
-    int  _b  = close > _o ? 1 : close < _o ? -1 : 0
-    (_b == 1 ? "▲ " : _b == -1 ? "▼ " : "— ") + f_tieState(_ht, _lt, _el) + "  " + str.tostring(f_tieComp(_ht, _lt, _el)) + "%"
-
-int   tieBull  = (close > tieMnO ? 1 : 0) + (close > tieWO ? 1 : 0) + (close > tieDO ? 1 : 0) + (close > tieH4O ? 1 : 0) + (close > tieH1O ? 1 : 0)
-int   tieBear  = (close < tieMnO ? 1 : 0) + (close < tieWO ? 1 : 0) + (close < tieDO ? 1 : 0) + (close < tieH4O ? 1 : 0) + (close < tieH1O ? 1 : 0)
-int   tieDir   = tieBull > tieBear ? 1 : tieBear > tieBull ? -1 : 0
-float tieAlign = math.max(tieBull, tieBear) / 5.0 * 100.0
-bool  _h1ht    = tieH1H > tieH1PH
-bool  _h1lt    = tieH1L < tieH1PL
-float _h1pos   = (close - tieH1L) / math.max(tieH1H - tieH1L, syminfo.mintick)
-float tieLowFirst = (_h1lt and not _h1ht) ? 30.0 : (_h1ht and not _h1lt) ? 70.0 : math.round(_h1pos * 100.0)
-string tieSeq = (not _h1lt ? "H1 low sweep" : not _h1ht ? "H1 high sweep" : "H1 complete") + " -> H4 " + (close > tieH4O ? "expansion up" : "expansion down") + " -> D " + (close > tieDO ? "highs" : "lows")
-
-var table tiePanel = na
-if showTIE and barstate.islast
-    if na(tiePanel)
-        tiePanel := table.new(position.middle_right, 2, 9, bgcolor = color.new(#0b0b1c, 8), frame_color = color.new(#00bcd4, 30), frame_width = 2, border_width = 0)
-    table.cell(tiePanel, 0, 0, "TIME INTELLIGENCE", text_color = #00e5ff, text_size = size.normal, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 0, tieDir == 1 ? "▲" : tieDir == -1 ? "▼" : "—", text_color = tieDir == 1 ? #5aff9e : tieDir == -1 ? #ff5a5a : color.gray, text_size = size.normal)
-    table.cell(tiePanel, 0, 1, "Monthly", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 1, f_tieRow(tieMnO, tieMnH, tieMnL, tieMnPH, tieMnPL, f_tieEl(tieMnT, "M")), text_color = color.white, text_size = size.small)
-    table.cell(tiePanel, 0, 2, "Weekly", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 2, f_tieRow(tieWO, tieWH, tieWL, tieWPH, tieWPL, f_tieEl(tieWT, "W")), text_color = color.white, text_size = size.small)
-    table.cell(tiePanel, 0, 3, "Daily", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 3, f_tieRow(tieDO, tieDH, tieDL, tieDPH, tieDPL, f_tieEl(tieDT, "D")), text_color = color.white, text_size = size.small)
-    table.cell(tiePanel, 0, 4, "H4", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 4, f_tieRow(tieH4O, tieH4H, tieH4L, tieH4PH, tieH4PL, f_tieEl(tieH4T, "240")), text_color = color.white, text_size = size.small)
-    table.cell(tiePanel, 0, 5, "H1", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 5, f_tieRow(tieH1O, tieH1H, tieH1L, tieH1PH, tieH1PL, f_tieEl(tieH1T, "60")), text_color = color.white, text_size = size.small)
-    table.cell(tiePanel, 0, 6, "Cycle alignment", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 6, str.tostring(math.round(tieAlign)) + "%", text_color = tieAlign >= 60 ? #5aff9e : color.yellow, text_size = size.small)
-    table.cell(tiePanel, 0, 7, "H1 low-first prob", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 7, str.tostring(math.round(tieLowFirst)) + "%", text_color = tieLowFirst >= 55 ? #ff8a8a : #5aff9e, text_size = size.small)
-    table.cell(tiePanel, 0, 8, "Likely sequence", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-    table.cell(tiePanel, 1, 8, tieSeq, text_color = #00e5ff, text_size = size.small)
+// (Engine 8.0 — Time Intelligence — moved to Master Senseei Unified to save Letra tokens.)

@@ -264,6 +264,52 @@ string wavePhase = na(waveOrigin) ? "—" : (waveProgress >= 100.0 and _pull > _
 string waveDirLbl = waveDir == 1 ? "Bullish" : waveDir == -1 ? "Bearish" : "Neutral"
 string waveNarr = na(waveOrigin) ? "Wave forming — awaiting structure." : waveDirLbl + " wave · " + str.tostring(math.round(waveProgress)) + "% to objective " + str.tostring(math.round_to_mintick(waveObj)) + " · " + wavePhase + "."
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE) — full 5-cycle stack + sub-engines
+//   Cycle objects (MN/W/D/H4/H1): open · running H/L · prior H/L · bias · state ·
+//   completion · liquidity taken. Sub-engines: Completion · Time-Probability ·
+//   Asymmetry · H1/H4 Timing · Cycle-Stack · Alignment · Conflict · Sequence ·
+//   Temporal-Path probabilities. Attached to the Chief Strategist (opportunity)
+//   panel and fed into confidence / threat — no extra panel (token-lean).
+// ═══════════════════════════════════════════════════════════════════════════════
+[tMnO, tMnH, tMnL, tMnPH, tMnPL, tMnT] = request.security(syminfo.tickerid, "M",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
+[tWO,  tWH,  tWL,  tWPH,  tWPL,  tWT]  = request.security(syminfo.tickerid, "W",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
+[tDO,  tDH,  tDL,  tDPH,  tDPL,  tDT]  = request.security(syminfo.tickerid, "D",   [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
+[tH4O, tH4H, tH4L, tH4PH, tH4PL, tH4T] = request.security(syminfo.tickerid, "240", [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
+[tH1O, tH1H, tH1L, tH1PH, tH1PL, tH1T] = request.security(syminfo.tickerid, "60",  [open, high, low, high[1], low[1], time], lookahead = barmerge.lookahead_off)
+
+f_tBias(float _o) => close > _o ? 1 : close < _o ? -1 : 0
+f_tEl(int _t, simple string _tf) => math.min(1.0, math.max(0.0, (float(timenow) - float(_t)) / (timeframe.in_seconds(_tf) * 1000.0)))
+f_tState(bool _ht, bool _lt, float _el) => (_ht and _lt) ? "DUAL DONE" : _ht ? "HIGH DONE" : _lt ? "LOW DONE" : _el < 0.15 ? "OPENING" : _el < 0.6 ? "EXPANDING" : _el < 0.9 ? "MID CYCLE" : "TERMINAL"
+f_tComp(bool _ht, bool _lt, float _el) => (_ht and _lt) ? 95.0 : (_ht or _lt) ? 45.0 : math.round(_el * 15.0)
+f_tLowProb(float _o, float _h, float _l, bool _ht, bool _lt) =>
+    float _pos = (close - _l) / math.max(_h - _l, syminfo.mintick)
+    (_lt and not _ht) ? 30.0 : (_ht and not _lt) ? 70.0 : math.round(_pos * 100.0)
+f_tTag(float _o, string _nm) => _nm + (close > _o ? "▲" : close < _o ? "▼" : "—")
+
+bool tMnHt = tMnH > tMnPH
+bool tMnLt = tMnL < tMnPL
+bool tWHt  = tWH > tWPH
+bool tWLt  = tWL < tWPL
+bool tDHt  = tDH > tDPH
+bool tDLt  = tDL < tDPL
+bool tH4Ht = tH4H > tH4PH
+bool tH4Lt = tH4L < tH4PL
+bool tH1Ht = tH1H > tH1PH
+bool tH1Lt = tH1L < tH1PL
+int   tBull = (f_tBias(tMnO) == 1 ? 1 : 0) + (f_tBias(tWO) == 1 ? 1 : 0) + (f_tBias(tDO) == 1 ? 1 : 0) + (f_tBias(tH4O) == 1 ? 1 : 0) + (f_tBias(tH1O) == 1 ? 1 : 0)
+int   tBear = (f_tBias(tMnO) == -1 ? 1 : 0) + (f_tBias(tWO) == -1 ? 1 : 0) + (f_tBias(tDO) == -1 ? 1 : 0) + (f_tBias(tH4O) == -1 ? 1 : 0) + (f_tBias(tH1O) == -1 ? 1 : 0)
+int   timeDir = tBull > tBear ? 1 : tBear > tBull ? -1 : 0
+float timeAlign = (tBull + tBear) > 0 ? math.max(tBull, tBear) / (tBull + tBear) * 100.0 : 50.0
+float timeConflict = 100.0 - timeAlign
+float h1LowProb = f_tLowProb(tH1O, tH1H, tH1L, tH1Ht, tH1Lt)
+string h1Timing = (tH1Ht and tH1Lt) ? "COMPLETION" : h1LowProb >= 55 ? "LOW FIRST" : h1LowProb <= 45 ? "HIGH FIRST" : "BALANCED"
+int   tP1 = math.min(90, math.round(45.0 + timeAlign * 0.4))
+int   tP3 = math.min(40, math.round(timeConflict * 0.25))
+int   tP2 = math.max(0, 100 - tP1 - tP3)
+string tStack = f_tTag(tMnO, "MN") + " " + f_tTag(tWO, "W") + " " + f_tTag(tDO, "D") + " " + f_tTag(tH4O, "H4") + " " + f_tTag(tH1O, "H1")
+string tSeq = (not tH1Lt ? "H1 low sweep" : not tH1Ht ? "H1 high sweep" : "H1 complete") + " -> H4 " + (f_tBias(tH4O) == 1 ? "up" : "down") + " -> D " + (f_tBias(tDO) == 1 ? "highs" : "lows") + " -> W " + (f_tBias(tWO) == 1 ? "highs" : "lows")
+
 // ── Drawing objects + hoisted state for global alerts ────────────────────────
 var array<line>  net_lines = array.new<line>()
 var array<label> net_lbls  = array.new<label>()
@@ -417,8 +463,8 @@ if barstate.islast
     int _forV = (_vt1 == master and _vt1 != 0 ? 1 : 0) + (_vt2 == master and _vt2 != 0 ? 1 : 0) + (_vt3 == master and _vt3 != 0 ? 1 : 0) + (_vt4 == master and _vt4 != 0 ? 1 : 0)
     float alignment = _cast > 0 ? _forV / _cast * 100.0 : 50.0
     float conflict = _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
-    float threat = math.max(0.0, math.min(100.0, conflict * 0.45 + residual * 0.30 + (pdir != 0 and pdir != master ? 20.0 : 0.0) + (resCode == 1 ? 12.0 : 0.0)))
-    float confidence = math.max(0.0, math.min(100.0, alignment * 0.45 + stackPct * 0.20 + attractor * 0.15 + math.min(20.0, _eligN * 1.5) - threat * 0.20))
+    float threat = math.max(0.0, math.min(100.0, conflict * 0.40 + residual * 0.28 + timeConflict * 0.12 + (pdir != 0 and pdir != master ? 18.0 : 0.0) + (resCode == 1 ? 10.0 : 0.0)))
+    float confidence = math.max(0.0, math.min(100.0, alignment * 0.40 + timeAlign * 0.12 + stackPct * 0.18 + attractor * 0.15 + math.min(15.0, _eligN * 1.2) - threat * 0.20))
     string timing = (wavePhase == "Absorption" or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
     string intent = conflict > 55 ? "ABSORPTION" : wavePhase == "Expansion" ? "EXPANSION" : wavePhase == "Pre-Convexity" ? "CONTINUATION" : wavePhase == "Induction" ? "RESOLUTION" : wavePhase == "Liquidation" ? "DELIVERY" : wavePhase == "Objective Arrival" ? "DELIVERY" : wavePhase == "Absorption" ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
     float oppScore = math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
@@ -489,7 +535,7 @@ if barstate.islast
 
     if showStrat
         if na(strat)
-            strat := table.new(position.top_left, 2, 12, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
+            strat := table.new(position.top_left, 2, 18, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
         table.cell(strat, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
         table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = vCol, text_size = size.large)
         table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
@@ -514,6 +560,18 @@ if barstate.islast
         table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : color.white, text_size = size.normal)
         table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = #ffd000, text_size = size.normal, text_halign = text.align_left)
         table.cell(strat, 1, 11, action, text_color = aCol, text_size = size.large)
+        table.cell(strat, 0, 12, "─ TIME INTELLIGENCE ─", text_color = #00e5ff, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 1, 12, timeDir == 1 ? "▲" : timeDir == -1 ? "▼" : "—", text_color = timeDir == 1 ? #5aff9e : timeDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(strat, 0, 13, "Cycles", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 13, tStack, text_color = color.white, text_size = size.normal)
+        table.cell(strat, 0, 14, "Time align / conflict", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 14, str.tostring(math.round(timeAlign)) + "% / " + str.tostring(math.round(timeConflict)) + "%", text_color = timeAlign >= 60 ? #5aff9e : color.yellow, text_size = size.normal)
+        table.cell(strat, 0, 15, "H1 timing", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 15, h1Timing + "  " + str.tostring(math.round(h1LowProb)) + "% low", text_color = color.white, text_size = size.normal)
+        table.cell(strat, 0, 16, "Likely sequence", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 16, tSeq, text_color = #00e5ff, text_size = size.normal)
+        table.cell(strat, 0, 17, "Paths  A / B / C", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 17, str.tostring(tP1) + "% / " + str.tostring(tP2) + "% / " + str.tostring(tP3) + "%", text_color = #b388ff, text_size = size.normal)
 
 // ── Alerts (global scope) ─────────────────────────────────────────────────────
 alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")
