@@ -79,6 +79,26 @@ f_fuPool(simple float _wf, simple int _lb) =>
     float _score = 20.0 + math.min(25.0, _wk * 15.0) + (_conf ? 30.0 : 0.0) + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
     [_have ? _tip : na, _mid, _dir, _have ? 1 : 0, _score]
 
+// ── Lower-TF picker. request.security_lower_tf returns one value per intrabar
+//    of the current chart bar (empty array when the requested TF >= chart). We
+//    take the most recent valid FU among those intrabars so a sub-chart FU
+//    (e.g. M5 while on H4) still becomes a node — Engine 2.0 global visibility. ──
+f_ltfPick(array<float> _t, array<float> _m, array<int> _d, array<int> _v, array<float> _s) =>
+    float _tip = na
+    float _mid = na
+    float _sc  = 0.0
+    int   _dir = 0
+    int   _val = 0
+    if array.size(_t) > 0
+        for _j = array.size(_t) - 1 to 0
+            if _val == 0 and array.get(_v, _j) == 1 and not na(array.get(_t, _j))
+                _tip := array.get(_t, _j)
+                _mid := array.get(_m, _j)
+                _dir := array.get(_d, _j)
+                _sc  := array.get(_s, _j)
+                _val := 1
+    [_tip, _mid, _dir, _sc, _val]
+
 // ── Scan all nine timeframes (MN → M1) ───────────────────────────────────────
 [mnTip,  mnMid,  mnDir,  mnV,  mnSc]  = request.security(syminfo.tickerid, f_safeTF("M"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [wTip,   wMid,   wDir,   wV,   wSc]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
@@ -89,6 +109,23 @@ f_fuPool(simple float _wf, simple int _lb) =>
 [m5Tip,  m5Mid,  m5Dir,  m5V,  m5Sc]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [m3Tip,  m3Mid,  m3Dir,  m3V,  m3Sc]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [m1Tip,  m1Mid,  m1Dir,  m1V,  m1Sc]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+
+// ── Lower-TF intrabar scans (Engine 2.0 GLOBAL VISIBILITY). These return data
+//    only when the requested TF is BELOW the chart (else empty array), letting
+//    H4→M1 nodes stay visible on higher charts. Picked down to a single newest
+//    FU per chart bar to keep the registry stable. ─────────────────────────────
+[h4LtT,  h4LtM,  h4LtD,  h4LtV,  h4LtS]  = request.security_lower_tf(syminfo.tickerid, "240", f_fuPool(wickFrac, lookback))
+[h1LtT,  h1LtM,  h1LtD,  h1LtV,  h1LtS]  = request.security_lower_tf(syminfo.tickerid, "60",  f_fuPool(wickFrac, lookback))
+[m15LtT, m15LtM, m15LtD, m15LtV, m15LtS] = request.security_lower_tf(syminfo.tickerid, "15",  f_fuPool(wickFrac, lookback))
+[m5LtT,  m5LtM,  m5LtD,  m5LtV,  m5LtS]  = request.security_lower_tf(syminfo.tickerid, "5",   f_fuPool(wickFrac, lookback))
+[m3LtT,  m3LtM,  m3LtD,  m3LtV,  m3LtS]  = request.security_lower_tf(syminfo.tickerid, "3",   f_fuPool(wickFrac, lookback))
+[m1LtT,  m1LtM,  m1LtD,  m1LtV,  m1LtS]  = request.security_lower_tf(syminfo.tickerid, "1",   f_fuPool(wickFrac, lookback))
+[h4pT,  h4pM,  h4pD,  h4pS,  h4pV]  = f_ltfPick(h4LtT,  h4LtM,  h4LtD,  h4LtV,  h4LtS)
+[h1pT,  h1pM,  h1pD,  h1pS,  h1pV]  = f_ltfPick(h1LtT,  h1LtM,  h1LtD,  h1LtV,  h1LtS)
+[m15pT, m15pM, m15pD, m15pS, m15pV] = f_ltfPick(m15LtT, m15LtM, m15LtD, m15LtV, m15LtS)
+[m5pT,  m5pM,  m5pD,  m5pS,  m5pV]  = f_ltfPick(m5LtT,  m5LtM,  m5LtD,  m5LtV,  m5LtS)
+[m3pT,  m3pM,  m3pD,  m3pS,  m3pV]  = f_ltfPick(m3LtT,  m3LtM,  m3LtD,  m3LtV,  m3LtS)
+[m1pT,  m1pM,  m1pD,  m1pS,  m1pV]  = f_ltfPick(m1LtT,  m1LtM,  m1LtD,  m1LtV,  m1LtS)
 
 // ── Bias: the highest-timeframe live validated FU sets the directional context;
 //    fall back to a 50-EMA slope when no FU is active. ─────────────────────────
@@ -139,7 +176,8 @@ f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
         array.shift(nRev)
 
 // Remember a NEW validated FU per timeframe (tip change = a freshly born node).
-// A TF below the chart is clamped (duplicate of the chart TF) → skip its push.
+// MN/W/D come from request.security; H4→M1 fall back to the lower-TF intrabar
+// pick when they are below the chart, so every TF stays globally visible.
 int  _chartSec = timeframe.in_seconds()
 bool _okMN  = timeframe.in_seconds("M")   >= _chartSec
 bool _okW   = timeframe.in_seconds("W")   >= _chartSec
@@ -168,24 +206,56 @@ if _okW and nz(wV)   == 1 and not na(wTip)   and (na(_pvW)   or wTip   != _pvW)
 if _okD and nz(dV)   == 1 and not na(dTip)   and (na(_pvD)   or dTip   != _pvD)
     f_nodeAdd(dTip,   dMid,   nz(dDir),   nz(dSc),   7)
     _pvD := dTip
-if _okH4 and nz(h4V)  == 1 and not na(h4Tip)  and (na(_pvH4)  or h4Tip  != _pvH4)
-    f_nodeAdd(h4Tip,  h4Mid,  nz(h4Dir),  nz(h4Sc),  6)
-    _pvH4 := h4Tip
-if _okH1 and nz(h1V)  == 1 and not na(h1Tip)  and (na(_pvH1)  or h1Tip  != _pvH1)
-    f_nodeAdd(h1Tip,  h1Mid,  nz(h1Dir),  nz(h1Sc),  5)
-    _pvH1 := h1Tip
-if _okM15 and nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
-    f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
-    _pvM15 := m15Tip
-if _okM5 and nz(m5V)  == 1 and not na(m5Tip)  and (na(_pvM5)  or m5Tip  != _pvM5)
-    f_nodeAdd(m5Tip,  m5Mid,  nz(m5Dir),  nz(m5Sc),  3)
-    _pvM5 := m5Tip
-if _okM3 and nz(m3V)  == 1 and not na(m3Tip)  and (na(_pvM3)  or m3Tip  != _pvM3)
-    f_nodeAdd(m3Tip,  m3Mid,  nz(m3Dir),  nz(m3Sc),  2)
-    _pvM3 := m3Tip
-if _okM1 and nz(m1V)  == 1 and not na(m1Tip)  and (na(_pvM1)  or m1Tip  != _pvM1)
-    f_nodeAdd(m1Tip,  m1Mid,  nz(m1Dir),  nz(m1Sc),  1)
-    _pvM1 := m1Tip
+// H4 → M1: use the higher-TF security value when the TF is at/above the chart;
+// otherwise use the lower-TF intrabar pick so the node stays globally visible.
+float h4Tf  = _okH4  ? h4Tip  : h4pT
+float h4Mf  = _okH4  ? h4Mid  : h4pM
+int   h4Df  = _okH4  ? nz(h4Dir)  : h4pD
+float h4Sf  = _okH4  ? nz(h4Sc)   : h4pS
+int   h4Vf  = _okH4  ? nz(h4V)    : h4pV
+float h1Tf  = _okH1  ? h1Tip  : h1pT
+float h1Mf  = _okH1  ? h1Mid  : h1pM
+int   h1Df  = _okH1  ? nz(h1Dir)  : h1pD
+float h1Sf  = _okH1  ? nz(h1Sc)   : h1pS
+int   h1Vf  = _okH1  ? nz(h1V)    : h1pV
+float m15Tf = _okM15 ? m15Tip : m15pT
+float m15Mf = _okM15 ? m15Mid : m15pM
+int   m15Df = _okM15 ? nz(m15Dir) : m15pD
+float m15Sf = _okM15 ? nz(m15Sc)  : m15pS
+int   m15Vf = _okM15 ? nz(m15V)   : m15pV
+float m5Tf  = _okM5  ? m5Tip  : m5pT
+float m5Mf  = _okM5  ? m5Mid  : m5pM
+int   m5Df  = _okM5  ? nz(m5Dir)  : m5pD
+float m5Sf  = _okM5  ? nz(m5Sc)   : m5pS
+int   m5Vf  = _okM5  ? nz(m5V)    : m5pV
+float m3Tf  = _okM3  ? m3Tip  : m3pT
+float m3Mf  = _okM3  ? m3Mid  : m3pM
+int   m3Df  = _okM3  ? nz(m3Dir)  : m3pD
+float m3Sf  = _okM3  ? nz(m3Sc)   : m3pS
+int   m3Vf  = _okM3  ? nz(m3V)    : m3pV
+float m1Tf  = _okM1  ? m1Tip  : m1pT
+float m1Mf  = _okM1  ? m1Mid  : m1pM
+int   m1Df  = _okM1  ? nz(m1Dir)  : m1pD
+float m1Sf  = _okM1  ? nz(m1Sc)   : m1pS
+int   m1Vf  = _okM1  ? nz(m1V)    : m1pV
+if h4Vf == 1 and not na(h4Tf) and (na(_pvH4) or h4Tf != _pvH4)
+    f_nodeAdd(h4Tf,  h4Mf,  h4Df,  h4Sf,  6)
+    _pvH4 := h4Tf
+if h1Vf == 1 and not na(h1Tf) and (na(_pvH1) or h1Tf != _pvH1)
+    f_nodeAdd(h1Tf,  h1Mf,  h1Df,  h1Sf,  5)
+    _pvH1 := h1Tf
+if m15Vf == 1 and not na(m15Tf) and (na(_pvM15) or m15Tf != _pvM15)
+    f_nodeAdd(m15Tf, m15Mf, m15Df, m15Sf, 4)
+    _pvM15 := m15Tf
+if m5Vf == 1 and not na(m5Tf) and (na(_pvM5) or m5Tf != _pvM5)
+    f_nodeAdd(m5Tf,  m5Mf,  m5Df,  m5Sf,  3)
+    _pvM5 := m5Tf
+if m3Vf == 1 and not na(m3Tf) and (na(_pvM3) or m3Tf != _pvM3)
+    f_nodeAdd(m3Tf,  m3Mf,  m3Df,  m3Sf,  2)
+    _pvM3 := m3Tf
+if m1Vf == 1 and not na(m1Tf) and (na(_pvM1) or m1Tf != _pvM1)
+    f_nodeAdd(m1Tf,  m1Mf,  m1Df,  m1Sf,  1)
+    _pvM1 := m1Tf
 
 // State transitions + revisit counting (every bar, to maintain memory).
 float _atr = ta.atr(14)
@@ -282,14 +352,17 @@ if barstate.islast
     float _topAuth       = 0.0
     int   _openMem       = 0
     int   _consumedCnt   = 0
+    int   _objCnt        = 0
     float _bullAuth      = 0.0
     float _bearAuth      = 0.0
     int   _domIdx        = -1
     float _domAuth       = 0.0
-    float _fezHiPx       = na   // nearest node above price
-    float _fezLoPx       = na   // nearest node below price
+    float _fezHiPx       = na   // strongest node above price (upper flip)
+    float _fezLoPx       = na   // strongest node below price (lower flip)
     int   _fezHiW        = 0
     int   _fezLoW        = 0
+    float _fezHiAuth     = 0.0
+    float _fezLoAuth     = 0.0
     if array.size(nPx) > 0
         for _i = 0 to array.size(nPx) - 1
             int   _st = array.get(nState, _i)
@@ -308,6 +381,8 @@ if barstate.islast
                     array.push(level_lines, line.new(bar_index - 1, _np, bar_index + 12, _np, color = _c, width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
                     array.push(level_lbls, label.new(bar_index + 12, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 20), textcolor = _st == 0 ? _base : color.gray, size = size.tiny))
                 _activeTotal += 1
+                if array.get(nWt, _i) >= 7
+                    _objCnt += 1
                 if _nd == netBias and netBias != 0
                     _activeAligned += 1
                 if _nd == 1
@@ -319,16 +394,19 @@ if barstate.islast
                 if _a > _domAuth
                     _domAuth := _a
                     _domIdx  := _i
-                // FEZ corridor bounds: nearest unconsumed node above & below
-                if _np > close and (na(_fezHiPx) or _np < _fezHiPx)
-                    _fezHiPx := _np
-                    _fezHiW  := _wt
-                if _np < close and (na(_fezLoPx) or _np > _fezLoPx)
-                    _fezLoPx := _np
-                    _fezLoW  := _wt
+                // FEZ corridor = between the strongest LINKED structures, not
+                // merely the nearest: top-authority node above & below price.
+                if _np > close and _a > _fezHiAuth
+                    _fezHiPx   := _np
+                    _fezHiW    := _wt
+                    _fezHiAuth := _a
+                if _np < close and _a > _fezLoAuth
+                    _fezLoPx   := _np
+                    _fezLoW    := _wt
+                    _fezLoAuth := _a
 
     // ── FEZ (FU Equilibrium Zone) — the corridor price oscillates inside,
-    //    bounded by the nearest node above and the nearest node below. ────────
+    //    bounded by the strongest linked structure above and below price. ──────
     if showFEZ and not na(_fezHiPx) and not na(_fezLoPx)
         fez_box := box.new(bar_index - 1, _fezHiPx, bar_index + 12, _fezLoPx, border_color = color.new(#7b2fff, 40), border_width = 1, bgcolor = color.new(#7b2fff, 88))
         float _comp = (_fezHiPx - _fezLoPx) / math.max(_atr, 1e-10)
@@ -337,6 +415,7 @@ if barstate.islast
     // ── Routes: CURRENT path (forward, bias side) + PREVIOUS path (trail) ────
     float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
     string _domPath = "—"
+    float _altConfOut = 0.0
 
     // CURRENT path — where price is going: chain forward (to the right) through
     // bias-side open nodes, nearest-first. Color = target TF, width = authority.
@@ -375,6 +454,7 @@ if barstate.islast
         if _altIdx >= 0
             float _an     = array.get(nPx, _altIdx)
             float _altConf = math.max(0.0, 100.0 - _routeConf)
+            _altConfOut := _altConf
             array.push(route_lines, line.new(bar_index, close, bar_index + 9, _an, color = color.new(#ff8a3d, 10), width = 1, style = line.style_dashed))
             alt_lbl := label.new(bar_index + 9, _an, "ALT  " + str.tostring(math.round(_altConf)) + "%  →  " + str.tostring(math.round_to_mintick(_an)), style = label.style_label_left, color = color.new(#6b3a14, 10), textcolor = #ffb27f, size = size.small)
 
@@ -478,3 +558,10 @@ if barstate.islast
         table.cell(netPanel, 1, 17, str.tostring(math.round(_routeConf)) + "%", text_color = _routeConf >= 60 ? #5aff9e : color.yellow, text_size = size.small)
         table.cell(netPanel, 0, 18, _domPath, text_color = #b388ff, text_size = size.small)
         table.cell(netPanel, 1, 18, "", text_color = color.white, text_size = size.small)
+        int _fezCnt = (not na(_fezHiPx) and not na(_fezLoPx)) ? 1 : 0
+        table.cell(netPanel, 0, 19, "Active FU / FEZ", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 19, str.tostring(_activeTotal) + " · " + str.tostring(_fezCnt), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 20, "Objectives / Edges", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 20, str.tostring(_objCnt) + " · " + str.tostring(_convCnt), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 21, "Alt path probability", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 21, str.tostring(math.round(_altConfOut)) + "%", text_color = #ffb27f, text_size = size.small)
