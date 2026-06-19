@@ -135,28 +135,28 @@ var float _pvM15 = na
 var float _pvM5  = na
 var float _pvM3  = na
 var float _pvM1  = na
-if nz(wV)   == 1 and not na(wTip)   and wTip   != _pvW
+if nz(wV)   == 1 and not na(wTip)   and (na(_pvW)   or wTip   != _pvW)
     f_nodeAdd(wTip,   wMid,   nz(wDir),   nz(wSc),   8)
     _pvW := wTip
-if nz(dV)   == 1 and not na(dTip)   and dTip   != _pvD
+if nz(dV)   == 1 and not na(dTip)   and (na(_pvD)   or dTip   != _pvD)
     f_nodeAdd(dTip,   dMid,   nz(dDir),   nz(dSc),   7)
     _pvD := dTip
-if nz(h4V)  == 1 and not na(h4Tip)  and h4Tip  != _pvH4
+if nz(h4V)  == 1 and not na(h4Tip)  and (na(_pvH4)  or h4Tip  != _pvH4)
     f_nodeAdd(h4Tip,  h4Mid,  nz(h4Dir),  nz(h4Sc),  6)
     _pvH4 := h4Tip
-if nz(h1V)  == 1 and not na(h1Tip)  and h1Tip  != _pvH1
+if nz(h1V)  == 1 and not na(h1Tip)  and (na(_pvH1)  or h1Tip  != _pvH1)
     f_nodeAdd(h1Tip,  h1Mid,  nz(h1Dir),  nz(h1Sc),  5)
     _pvH1 := h1Tip
-if nz(m15V) == 1 and not na(m15Tip) and m15Tip != _pvM15
+if nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
     f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
     _pvM15 := m15Tip
-if nz(m5V)  == 1 and not na(m5Tip)  and m5Tip  != _pvM5
+if nz(m5V)  == 1 and not na(m5Tip)  and (na(_pvM5)  or m5Tip  != _pvM5)
     f_nodeAdd(m5Tip,  m5Mid,  nz(m5Dir),  nz(m5Sc),  3)
     _pvM5 := m5Tip
-if nz(m3V)  == 1 and not na(m3Tip)  and m3Tip  != _pvM3
+if nz(m3V)  == 1 and not na(m3Tip)  and (na(_pvM3)  or m3Tip  != _pvM3)
     f_nodeAdd(m3Tip,  m3Mid,  nz(m3Dir),  nz(m3Sc),  2)
     _pvM3 := m3Tip
-if nz(m1V)  == 1 and not na(m1Tip)  and m1Tip  != _pvM1
+if nz(m1V)  == 1 and not na(m1Tip)  and (na(_pvM1)  or m1Tip  != _pvM1)
     f_nodeAdd(m1Tip,  m1Mid,  nz(m1Dir),  nz(m1Sc),  1)
     _pvM1 := m1Tip
 
