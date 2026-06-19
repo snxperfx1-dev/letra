@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 28", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 29", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3372,7 +3372,8 @@ showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=G
 fuwMinWickFrac = input.float(0.5,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.3, maxval=0.9, step=0.05)
 fuwLookback    = input.int  (5,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
 showFUStruct   = input.bool (true, "Show FU Structure Panel (cross-TF, replaces Opportunity)", group=GRP_FUOB)
-showFUConv     = input.bool (true, "Show FU Conversation Panel (1A.10 — takes middle-right slot)", group=GRP_FUOB)
+showFUConv     = input.bool (true, "Show FU Conversation Path (1A.10 — arrow to sought FU)", group=GRP_FUOB)
+showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B — arrow to active target)", group=GRP_FUOB)
 
 var float fuw_tip      = na      // wick extreme (manipulation point)
 var float fuw_bodyHigh = na
@@ -3614,125 +3615,41 @@ if afe_step >= 1 and not na(afe_origin) and afe_originDir != 0
         afe_step         := 5
         afe_continuation := true
 
-string afe_state =
-     afe_step == 0 ? "No FU echo" :
-     afe_step == 1 ? "FU formed — origin set" :
-     afe_step == 2 ? "Expansion away from FU" :
-     afe_step == 3 ? "Self-return to upper flip" :
-     afe_step == 4 ? "Seeking FU (flip→liquidity)" : "FU reached — continuation"
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENGINE 1A.10 — FU CONVERSATION SCANNER (Global Recursive Path Engine)
-// ───────────────────────────────────────────────────────────────────────────────
-// Price does not move between random highs/lows — it moves between conversations
-// of validated FU structures. Using the six cross-TF FU nodes (H4..M1) as the FU
-// registry, the scanner finds the structure price is conversing with, the parent
-// FU it is SEEKING, the intermediate liquidity on the way, and the unfinished
-// path(s) between them. Sits above destination / target / induction / AFE.
-array<float>  _cv_px  = array.new_float()
-array<int>    _cv_dir = array.new_int()
-array<float>  _cv_sc  = array.new_float()
-array<int>    _cv_wt  = array.new_int()
-array<string> _cv_tf  = array.new_string()
-if nz(h4_fuValid) == 1 and not na(h4_fuTip)
-    array.push(_cv_px, h4_fuTip)
-    array.push(_cv_dir, nz(h4_fuDir))
-    array.push(_cv_sc, nz(h4_fuScore))
-    array.push(_cv_wt, 6)
-    array.push(_cv_tf, "H4")
-if nz(h1_fuValid) == 1 and not na(h1_fuTip)
-    array.push(_cv_px, h1_fuTip)
-    array.push(_cv_dir, nz(h1_fuDir))
-    array.push(_cv_sc, nz(h1_fuScore))
-    array.push(_cv_wt, 5)
-    array.push(_cv_tf, "H1")
-if nz(m15_fuValid) == 1 and not na(m15_fuTip)
-    array.push(_cv_px, m15_fuTip)
-    array.push(_cv_dir, nz(m15_fuDir))
-    array.push(_cv_sc, nz(m15_fuScore))
-    array.push(_cv_wt, 4)
-    array.push(_cv_tf, "M15")
-if nz(m5_fuValid) == 1 and not na(m5_fuTip)
-    array.push(_cv_px, m5_fuTip)
-    array.push(_cv_dir, nz(m5_fuDir))
-    array.push(_cv_sc, nz(m5_fuScore))
-    array.push(_cv_wt, 3)
-    array.push(_cv_tf, "M5")
-if nz(m3_fuValid) == 1 and not na(m3_fuTip)
-    array.push(_cv_px, m3_fuTip)
-    array.push(_cv_dir, nz(m3_fuDir))
-    array.push(_cv_sc, nz(m3_fuScore))
-    array.push(_cv_wt, 2)
-    array.push(_cv_tf, "M3")
-if nz(m1_fuValid) == 1 and not na(m1_fuTip)
-    array.push(_cv_px, m1_fuTip)
-    array.push(_cv_dir, nz(m1_fuDir))
-    array.push(_cv_sc, nz(m1_fuScore))
-    array.push(_cv_wt, 1)
-    array.push(_cv_tf, "M1")
-
-int    conv_bias       = displayWaveDir_M5 != 0 ? displayWaveDir_M5 : fractalStackDir
-int    _cvN            = array.size(_cv_px)
-float  conv_currentPx  = na
-string conv_currentNode = "—"
-float  _cvCurDist      = 1e18
-float  conv_seekPx     = na
-string conv_seekTf     = "—"
-float  conv_seekSc     = 0.0
-int    _cvBestWt       = -1
-float  conv_interPx    = na
-string conv_interTf    = "—"
-float  _cvInterDist    = 1e18
-int    _cvAligned      = 0
-if _cvN > 0
-    for i = 0 to _cvN - 1
-        float _p = array.get(_cv_px, i)
-        float _d = math.abs(_p - close)
-        if _d < _cvCurDist
-            _cvCurDist := _d
-            conv_currentPx := _p
-            conv_currentNode := array.get(_cv_tf, i) + " FU"
-        if conv_bias != 0 and array.get(_cv_dir, i) == conv_bias
-            _cvAligned := _cvAligned + 1
-        bool _inDir = conv_bias == 1 ? _p > close : conv_bias == -1 ? _p < close : false
-        if _inDir and array.get(_cv_wt, i) > _cvBestWt
-            _cvBestWt   := array.get(_cv_wt, i)
-            conv_seekPx := _p
-            conv_seekTf := array.get(_cv_tf, i)
-            conv_seekSc := array.get(_cv_sc, i)
-    if conv_bias != 0 and not na(conv_seekPx)
-        for j = 0 to _cvN - 1
-            float _p2 = array.get(_cv_px, j)
-            bool _between = conv_bias == 1 ? (_p2 > close and _p2 < conv_seekPx) : (_p2 < close and _p2 > conv_seekPx)
-            if _between
-                float _d2 = math.abs(_p2 - close)
-                if _d2 < _cvInterDist
-                    _cvInterDist := _d2
-                    conv_interPx := _p2
-                    conv_interTf := array.get(_cv_tf, j)
-
-float  conv_confidence = conv_bias == 0 ? 0.0 : math.min(100.0, fu_recursiveAlign * 0.40 + conv_seekSc * 0.30 + (_cvAligned / 6.0 * 100.0) * 0.30)
-string conv_after =
-     conv_bias == 1  ? "Expansion / New high" :
-     conv_bias == -1 ? "Expansion / New low"  : "—"
-string conv_state =
-     conv_bias == 0       ? "RANGEBOUND" :
-     not na(conv_interPx) ? "ECHOING via " + conv_interTf :
-     not na(conv_seekPx)  ? "SEEKING PARENT FU" : "COLLAPSING"
-float  conv_secPx   = na
-string conv_secTf   = "—"
-float  _cvSecDist   = 1e18
-if _cvN > 0 and conv_bias != 0
-    for k = 0 to _cvN - 1
-        float _p3 = array.get(_cv_px, k)
-        bool _opp = conv_bias == 1 ? _p3 < close : _p3 > close
-        if _opp
-            float _d3 = math.abs(_p3 - close)
-            if _d3 < _cvSecDist
-                _cvSecDist := _d3
-                conv_secPx := _p3
-                conv_secTf := array.get(_cv_tf, k)
-float conv_secConf = math.max(0.0, 100.0 - conv_confidence)
+// ENGINE 1A.10 — FU CONVERSATION (compact, path-only — drawn as ARROWS, no panel)
+// Parent FU being SOUGHT = the highest-timeframe validated FU sitting on the bias
+// side of price. Confidence blends recursive FU alignment with that FU's score.
+int    conv_bias   = displayWaveDir_M5 != 0 ? displayWaveDir_M5 : fractalStackDir
+float  conv_seekPx = na
+string conv_seekTf = "—"
+float  conv_seekSc = 0.0
+if conv_bias != 0
+    if nz(h4_fuValid) == 1 and not na(h4_fuTip) and (conv_bias == 1 ? h4_fuTip > close : h4_fuTip < close)
+        conv_seekPx := h4_fuTip
+        conv_seekTf := "H4"
+        conv_seekSc := nz(h4_fuScore)
+    else if nz(h1_fuValid) == 1 and not na(h1_fuTip) and (conv_bias == 1 ? h1_fuTip > close : h1_fuTip < close)
+        conv_seekPx := h1_fuTip
+        conv_seekTf := "H1"
+        conv_seekSc := nz(h1_fuScore)
+    else if nz(m15_fuValid) == 1 and not na(m15_fuTip) and (conv_bias == 1 ? m15_fuTip > close : m15_fuTip < close)
+        conv_seekPx := m15_fuTip
+        conv_seekTf := "M15"
+        conv_seekSc := nz(m15_fuScore)
+    else if nz(m5_fuValid) == 1 and not na(m5_fuTip) and (conv_bias == 1 ? m5_fuTip > close : m5_fuTip < close)
+        conv_seekPx := m5_fuTip
+        conv_seekTf := "M5"
+        conv_seekSc := nz(m5_fuScore)
+    else if nz(m3_fuValid) == 1 and not na(m3_fuTip) and (conv_bias == 1 ? m3_fuTip > close : m3_fuTip < close)
+        conv_seekPx := m3_fuTip
+        conv_seekTf := "M3"
+        conv_seekSc := nz(m3_fuScore)
+    else if nz(m1_fuValid) == 1 and not na(m1_fuTip) and (conv_bias == 1 ? m1_fuTip > close : m1_fuTip < close)
+        conv_seekPx := m1_fuTip
+        conv_seekTf := "M1"
+        conv_seekSc := nz(m1_fuScore)
+float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, fu_recursiveAlign * 0.5 + conv_seekSc * 0.5)
 
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
@@ -6160,7 +6077,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         // Persistent registry: each TF's validated FU is held in f_fuPool var state
         // and read here via request.security, so an H4/H1 FU stays visible while you
         // sit on M1/M5. Toggle showFUStruct swaps it with the Opportunity Reactor.
-        if showFUStruct and not showFUConv
+        if showFUStruct
             var table mosFU = table.new(position.middle_right, 6, 8, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#ff2fd0, 35), frame_width=2, border_width=1)
             table.cell(mosFU, 0, 0, "TF",   text_color=#ff7fe6, text_size=size.tiny)
             table.cell(mosFU, 1, 0, "Dir",  text_color=#ff7fe6, text_size=size.tiny)
@@ -6180,7 +6097,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
             table.cell(mosFU, 3, 7, "Align", text_color=#ff7fe6, text_size=size.tiny)
             table.cell(mosFU, 4, 7, str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#5aff9e, text_size=size.tiny)
             table.cell(mosFU, 5, 7, "", text_color=color.white, text_size=size.tiny)
-        else if not showFUConv
+        else
             var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
             table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
             table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
@@ -6207,23 +6124,24 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
 f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENGINE 1A.10 — FU CONVERSATION PANEL (middle-right). Rendered in main scope so
-// it never collides with the V72 FU Structure / Opportunity panels (those yield
-// the slot when showFUConv is on). Shows the live conversation: current node,
-// the parent FU being sought, intermediate liquidity, the path's destination,
-// confidence + state, the secondary story, and the AFE flip-role echo.
-if showFUConv and showTable and barstate.islast
-    var table mosCv = table.new(position.middle_right, 1, 10, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#7b2fff, 35), frame_width=2, border_width=1)
-    table.cell(mosCv, 0, 0, "═══  FU CONVERSATION  ═══", text_color=#b388ff, text_size=size.small)
-    table.cell(mosCv, 0, 1, "PRICE      " + f_v72_px(close), text_color=color.white, text_size=size.small)
-    table.cell(mosCv, 0, 2, "NODE       " + conv_currentNode, text_color=#9fb0d8, text_size=size.small)
-    table.cell(mosCv, 0, 3, "SEEKING    " + (na(conv_seekPx) ? "—" : conv_seekTf + " FU  " + f_v72_px(conv_seekPx)), text_color=#ffd000, text_size=size.small)
-    table.cell(mosCv, 0, 4, "VIA LIQ    " + (na(conv_interPx) ? "—" : conv_interTf + "  " + f_v72_px(conv_interPx)), text_color=#5ad1ff, text_size=size.small)
-    table.cell(mosCv, 0, 5, "THEN       " + (na(conv_seekPx) ? "—" : f_v72_px(conv_seekPx)), text_color=color.white, text_size=size.small)
-    table.cell(mosCv, 0, 6, "AFTER      " + conv_after, text_color=#ffb347, text_size=size.small)
-    table.cell(mosCv, 0, 7, "CONF       " + str.tostring(math.round(conv_confidence)) + "%   " + conv_state, text_color=(conv_confidence >= 60 ? #5aff9e : color.yellow), text_size=size.small)
-    table.cell(mosCv, 0, 8, "SECONDARY  " + (na(conv_secPx) ? "—" : conv_secTf + "  " + f_v72_px(conv_secPx)) + "   " + str.tostring(math.round(conv_secConf)) + "%", text_color=color.silver, text_size=size.small)
-    table.cell(mosCv, 0, 9, "ECHO       " + afe_state + (afe_upperFlipRole != "—" ? "  · flip=" + afe_upperFlipRole : ""), text_color=#c9a0ff, text_size=size.small)
+// ENGINE 1A.10 / 1A.9B — PATH ARROWS (toggle-driven; no panels, low token cost).
+// Conversation path: an arrow from price to the parent FU it is seeking, labelled
+// with the source TF + confidence. AFE echo: an arrow to the active flip/FU target.
+var line  conv_arrow    = na
+var label conv_arrowLbl = na
+var line  afe_arrow     = na
+if barstate.islast
+    if not na(conv_arrow)
+        line.delete(conv_arrow)
+    if not na(conv_arrowLbl)
+        label.delete(conv_arrowLbl)
+    if not na(afe_arrow)
+        line.delete(afe_arrow)
+    if showFUConv and not na(conv_seekPx)
+        conv_arrow := line.new(bar_index, close, bar_index + 30, conv_seekPx, color=color.new(#b388ff, 0), width=2, style=line.style_arrow_right)
+        conv_arrowLbl := label.new(bar_index + 30, conv_seekPx, conv_seekTf + " FU  " + str.tostring(math.round(conv_confidence)) + "%", style=label.style_label_left, color=color.new(#7b2fff, 10), textcolor=color.white, size=size.small)
+    if showAFE and not na(afe_activeDest)
+        afe_arrow := line.new(bar_index, close, bar_index + 18, afe_activeDest, color=color.new(#c9a0ff, 10), width=2, style=line.style_arrow_right)
 
 
 
