@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 16", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 17", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -234,37 +234,12 @@ f_mosBar(float _pct) =>
 f_tfProg(float _orig, float _tgt) =>
     (not na(_orig) and not na(_tgt) and math.abs(_tgt - _orig) > 1e-10) ? math.min(100.0, math.abs(close - _orig) / math.abs(_tgt - _orig) * 100.0) : na
 
-// Compact phase abbreviation for on-chart labels (keeps the chart uncluttered).
-f_phaseAbbr(string _p) =>
-    str.contains(_p, "Liquidation Wave") ? "LQW" :
-     _p == "Expansion"                ? "EXP"    :
-     _p == "Expansion Pre-Convexity" ? "EXP·PC" :
-     _p == "Expansion Induction"     ? "EXP·IN" :
-     _p == "Expansion Liquidity"     ? "EXP·LQ" :
-     _p == "New High"                ? "NEW HI" :
-     _p == "New Low"                 ? "NEW LO" :
-     _p == "Absorption"              ? "ABS"    :
-     _p == "Retracement"             ? "RET"    :
-     _p == "Retracement Pre-Convexity" ? "RET·PC" :
-     _p == "Retracement Induction"   ? "RET·IN" :
-     _p == "Retracement Liquidity"   ? "RET·LQ" :
-     _p == "Demand Return"           ? "DEM·RTN" :
-     _p == "Supply Return"           ? "SUP·RTN" :
-     _p == "Point 4 Origin"          ? "P4" : _p
-
-// Clean on-chart phase label — sparse full-word vocabulary; "" = do not label
-// (plain Expansion / Point 4 Origin return "" so the chart isn't spammed).
-f_chartPhaseLabel(string _p) =>
-    str.contains(_p, "Liquidation Wave") ? (str.contains(_p, "Displacement") ? "Displacement of Liquidation leg" : str.contains(_p, "Objective Arrival") ? "Objective Arrival" : "Liquidation") :
-     _p == "Expansion Pre-Convexity" or _p == "Retracement Pre-Convexity" ? "Pre-Convexity" :
-     _p == "Expansion Induction" or _p == "Retracement Induction"         ? "Induction"     :
-     _p == "Expansion Liquidity" or _p == "Retracement Liquidity"         ? "Liquidation"   :
-     _p == "New High"      ? "New High"      :
-     _p == "New Low"       ? "New Low"       :
-     _p == "Absorption"    ? "Absorption"    :
-     _p == "Retracement"   ? "Retracement"   :
-     _p == "Demand Return" ? "Demand Return" :
-     _p == "Supply Return" ? "Supply Return" : ""
+// NOTE (v17): the lossy on-chart phase helpers f_phaseAbbr (LQW/EXP·LQ/…) and
+// f_chartPhaseLabel (collapsed Liquidation/Pre-Convexity/Induction) were REMOVED.
+// They discarded the liquidation title + substate and forced every leg to read
+// "Liquidation". The chart now renders the single Engine-1A authority string
+// `currentDisplayPhase` verbatim as a persistent REGION label (see Section "DIE
+// region-based display authority" below). Do not reintroduce a collapse layer.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 2 — CORE PHYSICS ENGINE
@@ -3424,48 +3399,85 @@ bool die_originOld     = die_originAge >= 100
 // Single dominant narrative label. Never stack historical narratives.
 // Uses canonical Unified Wave Lifecycle phase names.
 
-// die_narrative: sourced from ENGINE 1A canonical phase (sole lifecycle authority).
-// The ie1a_hypFamily string maps canonical phases back to the old vocabulary so
-// downstream colour logic (which expects these strings) continues to work.
-string die_narrative    = ie1a_hypFamily    // belief-family string from IE1A
-string die_narrativeDir = currentDisplayPhase // single Engine 1A display authority (canonical + liquidation substate)
-
-// Absorption authority: Absorption may only be LABELLED after an objective (New
-// High/Low or liquidation objective arrival) was made; otherwise mid-leg momentum
-// exhaustion is NOT absorption (it is expansion / pre-convexity) and is suppressed.
+// die_objMade gate retained: "Absorption" may only be labelled after a genuine
+// objective (New High/Low or liquidation objective arrival) for this wave.
 var bool die_objMade = false
 if ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low" or liqg_objArrival
     die_objMade := true
 if ie1a_currentPhase == "Expansion" or ie1a_currentPhase == "Point 4 Origin"
     die_objMade := false
-string die_chartLbl0 = f_chartPhaseLabel(currentDisplayPhase)
-string die_chartLbl = (die_chartLbl0 == "Absorption" and not die_objMade) ? "" : die_chartLbl0
-var string die_lastNarrative = ""
-bool die_narrativeChanged = die_chartLbl != die_lastNarrative and die_chartLbl != ""
-die_lastNarrative := die_chartLbl
 
-color die_narrCol =
-     die_narrative == "EXPANSION"         ? color.lime   :
-     die_narrative == "CONVEXITY FORMING" ? #c084fc      :
-     die_narrative == "CREATION FORMING"  ? #00ff88      :
-     die_narrative == "ABSORPTION"        ? color.aqua   :
-     die_narrative == "RETRACEMENT"       ? color.silver : color.orange
+// ── DIE: REGION-BASED DISPLAY AUTHORITY (v17 root-cause fix) ──────────────────
+// The chart phase label is now a REGION marker, not a one-bar change-event, and
+// it renders the SINGLE Engine-1A authority string `currentDisplayPhase` VERBATIM
+// — including the liquidation TITLE + SUBSTATE — with no f_chartPhaseLabel
+// collapse. Text, colour AND visibility all read the SAME authority
+// (liqg_* / ie1a_currentPhase). During a liquidation wave the label shows the
+// title on line 1 and the live substate (Push / Displacement / Terminal
+// Liquidation / Objective Arrival …) on line 2. One persistent label is created
+// at each region's start bar and is left anchored there for the whole leg.
 
-// Section 9 — Entry Cycle Visibility gating for the active narrative label.
-// Each narrative state maps to its corresponding visibility category.
-bool die_narrativeVisible =
-     die_narrative == "EXPANSION"         ? ecvShow_Expansion     :
-     die_narrative == "CONVEXITY FORMING" ? ecvShow_Convexity     :
-     die_narrative == "CREATION FORMING"  ? ecvShow_PreConvexity  :
-     die_narrative == "ABSORPTION"        ? ecvShow_Absorption    :
-     die_narrative == "RETRACEMENT"       ? ecvShow_Retracement   : true
+// Full region display text (multi-line during a liquidation wave).
+string die_regionTxt =
+     liqg_active ? (str.upper(liqg_title) + (liqg_subPhase != "" ? "\n" + liqg_subPhase : "")) :
+     ie1a_currentPhase == "Expansion"                                                                   ? "EXPANSION"     :
+     ie1a_currentPhase == "Expansion Pre-Convexity" or ie1a_currentPhase == "Retracement Pre-Convexity" ? "PRE-CONVEXITY" :
+     ie1a_currentPhase == "Expansion Induction"     or ie1a_currentPhase == "Retracement Induction"     ? "INDUCTION"     :
+     ie1a_currentPhase == "Expansion Liquidity"     or ie1a_currentPhase == "Retracement Liquidity"     ? "LIQUIDATION"   :
+     ie1a_currentPhase == "New High"                                                                    ? "NEW HIGH"      :
+     ie1a_currentPhase == "New Low"                                                                     ? "NEW LOW"       :
+     ie1a_currentPhase == "Absorption"                                                                  ? "ABSORPTION"    :
+     ie1a_currentPhase == "Retracement"                                                                 ? "RETRACEMENT"   :
+     ie1a_currentPhase == "Demand Return"                                                               ? "DEMAND RETURN" :
+     ie1a_currentPhase == "Supply Return"                                                               ? "SUPPLY RETURN" : ""
 
-if showNarrative and die_narrativeChanged and direction != 0 and f_die_show(80) and die_narrativeVisible
+// Absorption may only be LABELLED after a genuine objective (unchanged gate).
+if die_regionTxt == "ABSORPTION" and not die_objMade
+    die_regionTxt := ""
+
+// Colour — single authority (liquidation overlay wins, else canonical phase).
+color die_regionCol =
+     liqg_active                                                                                        ? color.orange :
+     ie1a_currentPhase == "Expansion"                                                                   ? color.lime   :
+     ie1a_currentPhase == "Expansion Pre-Convexity" or ie1a_currentPhase == "Retracement Pre-Convexity" ? #c084fc      :
+     ie1a_currentPhase == "Expansion Induction"     or ie1a_currentPhase == "Retracement Induction"     ? color.yellow :
+     ie1a_currentPhase == "Expansion Liquidity"     or ie1a_currentPhase == "Retracement Liquidity"     ? color.orange :
+     ie1a_currentPhase == "New High"  or ie1a_currentPhase == "New Low"                                  ? #00ff88      :
+     ie1a_currentPhase == "Absorption"                                                                  ? color.aqua   :
+     ie1a_currentPhase == "Retracement"                                                                 ? color.silver : color.gray
+
+// Visibility — single authority, wired to the matching Section-9 category. The
+// liquidation regions now correctly consult ecvShow_Liquidation (not Convexity).
+bool die_regionVisible =
+     liqg_active                                                                                        ? ecvShow_Liquidation  :
+     ie1a_currentPhase == "Expansion"                                                                   ? ecvShow_Expansion    :
+     ie1a_currentPhase == "Expansion Pre-Convexity" or ie1a_currentPhase == "Retracement Pre-Convexity" ? ecvShow_PreConvexity :
+     ie1a_currentPhase == "Expansion Induction"     or ie1a_currentPhase == "Retracement Induction"     ? ecvShow_Induction    :
+     ie1a_currentPhase == "Expansion Liquidity"     or ie1a_currentPhase == "Retracement Liquidity"     ? ecvShow_Liquidation  :
+     ie1a_currentPhase == "New High"                                                                    ? ecvShow_Highs        :
+     ie1a_currentPhase == "New Low"                                                                     ? ecvShow_Lows         :
+     ie1a_currentPhase == "Absorption"                                                                  ? ecvShow_Absorption   :
+     ie1a_currentPhase == "Retracement"                                                                 ? ecvShow_Retracement  :
+     ie1a_currentPhase == "Demand Return"                                                               ? ecvShow_Demand       :
+     ie1a_currentPhase == "Supply Return"                                                               ? ecvShow_Supply       : true
+
+// Larger label for the key regions the user must always see.
+bool die_regionBig = liqg_active or str.contains(die_regionTxt, "INDUCTION") or str.contains(die_regionTxt, "PRE-CONVEXITY")
+
+// Region tracking — a new region begins whenever the authority text changes
+// (incl. each liquidation SUBSTATE change). One persistent label per region,
+// created at its start bar and left anchored there. NOTE: deliberately NOT gated
+// by f_die_show() — this is THE phase authority and must survive Execution mode.
+var string die_activeRegion = ""
+bool die_regionChanged = die_regionTxt != die_activeRegion
+die_activeRegion := die_regionTxt
+if die_regionChanged and showNarrative and die_regionTxt != "" and direction != 0 and die_regionVisible
     label.new(bar_index,
          direction == 1 ? high + atr * 1.2 : low - atr * 1.2,
-         die_chartLbl,
+         die_regionTxt,
          style=direction == 1 ? label.style_label_down : label.style_label_up,
-         color=color.new(die_narrCol, 40), textcolor=color.black, size=size.tiny)
+         color=color.new(die_regionCol, 25), textcolor=color.white,
+         size=die_regionBig ? size.normal : size.small)
     die_labelCount := die_labelCount + 1
 
 // ── DIE-7: ENTRY CYCLE CLUSTER TRACKING ──────────────────────────────────────
