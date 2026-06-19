@@ -178,6 +178,14 @@ if array.size(nPx) > 0
 // Effective authority = sub-score + timeframe weight*4 + revisits*3.
 f_auth(int _i) => array.get(nSc, _i) + array.get(nWt, _i) * 4.0 + array.get(nRev, _i) * 3.0
 
+// Magnet score = authority + proximity + bias-alignment + untouched/recursion.
+f_magnet(int _i) =>
+    float _d  = math.abs(close - array.get(nPx, _i)) / math.max(_atr, 1e-10)
+    float _db = math.max(0.0, 30.0 - _d * 3.0)
+    float _ab = (array.get(nDir, _i) == netBias and netBias != 0) ? 15.0 : 0.0
+    float _ub = array.get(nRev, _i) == 0 ? 10.0 : math.min(20.0, array.get(nRev, _i) * 3.0)
+    f_auth(_i) * 0.5 + _db + _ab + _ub
+
 // ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
 var array<line>  route_lines = array.new<line>()
 var array<line>  level_lines = array.new<line>()
@@ -201,13 +209,19 @@ if barstate.islast
     if not na(route_lbl)
         label.delete(route_lbl)
 
-    // ── Network levels + route eligibility tally ─────────────────────────────
+    // ── Network levels + tallies (open/consumed counts, route inputs) ────────
     int   _activeAligned = 0
     int   _activeTotal   = 0
     float _topAuth       = 0.0
+    int   _openMem       = 0
+    int   _consumedCnt   = 0
     if array.size(nPx) > 0
         for _i = 0 to array.size(nPx) - 1
             int   _st = array.get(nState, _i)
+            if _st == 2
+                _consumedCnt += 1
+            else
+                _openMem += 1
             float _a  = f_auth(_i)
             if _st <= 1 and _a >= authMin
                 float _np = array.get(nPx, _i)
@@ -223,70 +237,104 @@ if barstate.islast
                     if _a > _topAuth
                         _topAuth := _a
 
-    // ── Route: connected arrows through eligible bias-side active nodes ──────
+    // ── Route: bias-side active nodes, nearest-first → arrows + dominant path ─
     float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
-    if showRoute and netBias != 0 and _routeConf >= routeMinConf
-        array<float> _rt = array.new_float()
-        if array.size(nPx) > 0
-            for _i = 0 to array.size(nPx) - 1
-                if array.get(nState, _i) == 0 and f_auth(_i) >= authMin and array.get(nDir, _i) == netBias
-                    float _np = array.get(nPx, _i)
-                    if netBias == 1 ? _np > close : _np < close
-                        array.push(_rt, _np)
-        if array.size(_rt) > 0
-            array.sort(_rt, netBias == 1 ? order.ascending : order.descending)
+    string _domPath = "—"
+    if showRoute and netBias != 0 and _routeConf >= routeMinConf and array.size(nPx) > 0
+        array<int> _ri = array.new_int()
+        for _i = 0 to array.size(nPx) - 1
+            if array.get(nState, _i) == 0 and f_auth(_i) >= authMin and array.get(nDir, _i) == netBias and (netBias == 1 ? array.get(nPx, _i) > close : array.get(nPx, _i) < close)
+                array.push(_ri, _i)
+        if array.size(_ri) > 1
+            for _a = 1 to array.size(_ri) - 1
+                int   _key = array.get(_ri, _a)
+                float _kd  = math.abs(close - array.get(nPx, _key))
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if math.abs(close - array.get(nPx, array.get(_ri, _b))) > _kd
+                        array.set(_ri, _b + 1, array.get(_ri, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_ri, _b + 1, _key)
+        if array.size(_ri) > 0
             int   _x = bar_index
             float _y = close
-            for _i = 0 to array.size(_rt) - 1
-                float _n  = array.get(_rt, _i)
-                int   _x2 = _x + 10
+            _domPath := "Price"
+            for _i = 0 to array.size(_ri) - 1
+                int   _idx = array.get(_ri, _i)
+                float _n   = array.get(nPx, _idx)
+                int   _x2  = _x + 10
                 array.push(route_lines, line.new(_x, _y, _x2, _n, color = color.new(#b388ff, 0), width = 2, style = line.style_arrow_right))
                 _x := _x2
                 _y := _n
+                _domPath := _domPath + " → " + f_wtTf(array.get(nWt, _idx))
             route_lbl := label.new(_x, _y, "ROUTE  " + str.tostring(math.round(_routeConf)) + "%  →  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_left, color = color.new(#7b2fff, 5), textcolor = color.white, size = size.normal)
 
     // ── Conversation panel ──────────────────────────────────────────────────
     if showPanel
         if na(netPanel)
-            netPanel := table.new(position.top_right, 2, 12, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#7b2fff, 30), frame_width = 2, border_width = 0)
+            netPanel := table.new(position.top_right, 2, 22, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#7b2fff, 30), frame_width = 2, border_width = 0)
         table.cell(netPanel, 0, 0, "INVISIBLE NETWORK", text_color = #b388ff, text_size = size.normal)
         table.cell(netPanel, 1, 0, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.normal)
-        table.cell(netPanel, 0, 1, "Price", text_color = color.silver, text_size = size.small)
-        table.cell(netPanel, 1, 1, str.tostring(math.round_to_mintick(close)), text_color = color.white, text_size = size.small)
-        table.cell(netPanel, 0, 2, "Route conf", text_color = color.silver, text_size = size.small)
-        table.cell(netPanel, 1, 2, str.tostring(math.round(_routeConf)) + "%", text_color = _routeConf >= 60 ? #5aff9e : color.yellow, text_size = size.small)
-        table.cell(netPanel, 0, 3, "Active nodes", text_color = color.silver, text_size = size.small)
-        table.cell(netPanel, 1, 3, str.tostring(_activeTotal) + " (" + str.tostring(_activeAligned) + " aligned)", text_color = color.white, text_size = size.small)
-        table.cell(netPanel, 0, 4, "Remembered", text_color = color.silver, text_size = size.small)
-        table.cell(netPanel, 1, 4, str.tostring(array.size(nPx)), text_color = color.white, text_size = size.small)
-        table.cell(netPanel, 0, 5, "─ ACTIVE CONVERSATIONS ─", text_color = #ff7fe6, text_size = size.small)
-        table.cell(netPanel, 1, 5, "", text_color = color.white, text_size = size.small)
-        // collect eligible active node indices, then sort them by authority (desc)
-        array<int> _ord = array.new_int()
+        table.cell(netPanel, 0, 1, "Path confidence", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 1, str.tostring(math.round(_routeConf)) + "%", text_color = _routeConf >= 60 ? #5aff9e : color.yellow, text_size = size.small)
+        table.cell(netPanel, 0, 2, "Memory", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 2, str.tostring(_openMem) + " open · " + str.tostring(_consumedCnt) + " consumed", text_color = color.white, text_size = size.small)
+        // magnet-sorted list of open eligible nodes (used for both sections)
+        array<int> _mg = array.new_int()
         if array.size(nPx) > 0
             for _i = 0 to array.size(nPx) - 1
-                if array.get(nState, _i) == 0 and f_auth(_i) >= authMin
-                    array.push(_ord, _i)
-        if array.size(_ord) > 1
-            for _a = 1 to array.size(_ord) - 1
-                int   _key  = array.get(_ord, _a)
-                float _keyA = f_auth(_key)
-                int   _b    = _a - 1
-                bool  _go   = _b >= 0
+                if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin
+                    array.push(_mg, _i)
+        if array.size(_mg) > 1
+            for _a = 1 to array.size(_mg) - 1
+                int   _key = array.get(_mg, _a)
+                float _km  = f_magnet(_key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
                 while _go
-                    if f_auth(array.get(_ord, _b)) < _keyA
-                        array.set(_ord, _b + 1, array.get(_ord, _b))
+                    if f_magnet(array.get(_mg, _b)) < _km
+                        array.set(_mg, _b + 1, array.get(_mg, _b))
                         _b -= 1
                         _go := _b >= 0
                     else
                         _go := false
-                array.set(_ord, _b + 1, _key)
-        int _rows = math.min(array.size(_ord), 6)
-        if _rows > 0
-            for _k = 0 to _rows - 1
-                int    _idx   = array.get(_ord, _k)
-                int    _nd    = array.get(nDir, _idx)
-                bool   _near  = math.abs(close - array.get(nPx, _idx)) < _atr * 0.5
-                string _state = (_nd == netBias and netBias != 0) ? (_near ? "REACTING" : "SEEKING") : "OPPOSING"
-                table.cell(netPanel, 0, 6 + _k, f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(array.get(nPx, _idx))), text_color = _nd == 1 ? #5aff9e : #ff5a5a, text_size = size.small)
-                table.cell(netPanel, 1, 6 + _k, _state + "  " + str.tostring(math.round(f_auth(_idx))), text_color = color.white, text_size = size.small)
+                array.set(_mg, _b + 1, _key)
+        // STRONGEST MAGNETS (top 3 by magnet score)
+        table.cell(netPanel, 0, 3, "─ STRONGEST MAGNETS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 3, "", text_color = color.white, text_size = size.small)
+        int _mn = math.min(array.size(_mg), 3)
+        for _k = 0 to 2
+            if _k < _mn
+                int _idx = array.get(_mg, _k)
+                int _nd  = array.get(nDir, _idx)
+                table.cell(netPanel, 0, 4 + _k, str.tostring(_k + 1) + " " + f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(array.get(nPx, _idx))), text_color = _nd == 1 ? #5aff9e : #ff5a5a, text_size = size.small)
+                table.cell(netPanel, 1, 4 + _k, "MAGNET " + str.tostring(math.round(f_magnet(_idx))), text_color = #ffd000, text_size = size.small)
+            else
+                table.cell(netPanel, 0, 4 + _k, "—", text_color = color.gray, text_size = size.small)
+                table.cell(netPanel, 1, 4 + _k, "", text_color = color.gray, text_size = size.small)
+        // ACTIVE CONVERSATIONS (top 5, with status + distance)
+        table.cell(netPanel, 0, 7, "─ ACTIVE CONVERSATIONS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 7, "", text_color = color.white, text_size = size.small)
+        int _cn = math.min(array.size(_mg), 5)
+        for _k = 0 to 4
+            if _k < _cn
+                int   _idx  = array.get(_mg, _k)
+                int   _nd   = array.get(nDir, _idx)
+                float _np   = array.get(nPx, _idx)
+                float _dATR = math.abs(close - _np) / math.max(_atr, 1e-10)
+                int   _rv   = array.get(nRev, _idx)
+                string _status = _dATR < 0.5 ? "ATTACKING" : _rv > 0 ? "RETURNING" : (_nd == netBias and netBias != 0) ? "ATTRACTING" : "OPPOSING"
+                table.cell(netPanel, 0, 8 + _k, f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(_np)), text_color = _nd == 1 ? #5aff9e : #ff5a5a, text_size = size.small)
+                table.cell(netPanel, 1, 8 + _k, _status + "  " + str.tostring(_dATR, "#.#") + " ATR", text_color = color.white, text_size = size.small)
+            else
+                table.cell(netPanel, 0, 8 + _k, "—", text_color = color.gray, text_size = size.small)
+                table.cell(netPanel, 1, 8 + _k, "", text_color = color.gray, text_size = size.small)
+        // DOMINANT PATH
+        table.cell(netPanel, 0, 13, "─ DOMINANT PATH ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 13, str.tostring(math.round(_routeConf)) + "%", text_color = _routeConf >= 60 ? #5aff9e : color.yellow, text_size = size.small)
+        table.cell(netPanel, 0, 14, _domPath, text_color = #b388ff, text_size = size.small)
+        table.cell(netPanel, 1, 14, "", text_color = color.white, text_size = size.small)
