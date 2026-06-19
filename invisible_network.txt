@@ -31,6 +31,7 @@ bool   showCurPath  = input.bool (true,  "Show CURRENT path (forward route)",gro
 bool   showAltPath  = input.bool (true,  "Show ALTERNATIVE path / AFE (dashed)", group = GRP)
 bool   showPrevPath = input.bool (true,  "Show PREVIOUS path (trail behind)",group = GRP)
 bool   showPanel    = input.bool (true,  "Show conversation panel",         group = GRP)
+bool   showCoPilot  = input.bool (true,  "Show CO-PILOT panel (bottom-right)", group = GRP, tooltip = "Live read-out: where price is, the most likely path and its next nodes, the alternate/counter paths with probabilities, and a plain-language note on the interaction price is currently attempting.")
 int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
 int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
 
@@ -139,6 +140,9 @@ f_wtTf(int _wt) => _wt == 9 ? "MN" : _wt == 8 ? "W" : _wt == 7 ? "D" : _wt == 6 
 
 // Engine 2.8 — cross-TF color matrix: every timeframe has its own hue.
 f_tfColor(int _wt) => _wt == 9 ? color.white : _wt == 8 ? #ffd000 : _wt == 7 ? #ffe96b : _wt == 6 ? #22d3ee : _wt == 5 ? #b388ff : _wt == 4 ? #5a8bff : _wt == 3 ? #5aff9e : _wt == 2 ? #9ef0c0 : color.gray
+
+// Co-pilot helper — compact label for a node index ("H1 ▲ 4123.5"), or "—".
+f_cpNode(int _i) => _i < 0 ? "—" : f_wtTf(array.get(nWt, _i)) + " " + (array.get(nDir, _i) == 1 ? "▲" : "▼") + " " + str.tostring(math.round_to_mintick(array.get(nPx, _i)))
 
 f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
     array.push(nPx, _tip)
@@ -281,6 +285,7 @@ var label        alt_lbl     = na
 var box          fez_box     = na
 var label        fez_lbl     = na
 var table        netPanel    = na
+var table        coPilot     = na
 
 // WEB MODE is a purely informational overlay layer that sits ABOVE detection:
 // the node registry / states are always maintained above; this block only
@@ -631,3 +636,43 @@ if barstate.islast and webMode
         string _webInteg = _webCov >= 3 ? "HIGH" : _webCov == 2 ? "MED" : "LOW"
         table.cell(netPanel, 0, 31, "WEB INTEGRITY", text_color = color.silver, text_size = size.small)
         table.cell(netPanel, 1, 31, _webInteg + " (" + str.tostring(_webCov) + "/4)", text_color = _webCov >= 3 ? #5aff9e : _webCov == 2 ? color.yellow : #ff5a5a, text_size = size.small)
+
+    // ── NETWORK CO-PILOT (bottom-right) — live read of where price is, the most
+    //    likely path & its next nodes, the alternate / counter paths with their
+    //    probabilities, and a plain-language note on the interaction in progress.
+    if showCoPilot
+        if na(coPilot)
+            coPilot := table.new(position.bottom_right, 1, 7, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 35), frame_width = 2, border_width = 0)
+        array<int> _fwdCP = f_pathNodes(true)
+        array<int> _bwdCP = f_pathNodes(false)
+        int _toIdx   = array.size(_fwdCP) > 0 ? array.get(_fwdCP, 0) : -1
+        int _thenIdx = array.size(_fwdCP) > 1 ? array.get(_fwdCP, 1) : -1
+        int _altIdx  = array.size(_fwdCP) > 2 ? array.get(_fwdCP, 2) : _thenIdx
+        int _fromIdx = array.size(_bwdCP) > 0 ? array.get(_bwdCP, 0) : -1
+        int _ctrIdx  = array.size(_bwdCP) > 1 ? array.get(_bwdCP, 1) : _fromIdx
+        int _pPrimary = math.round(_routeConf)
+        int _pAlt     = math.round((100.0 - _routeConf) * 0.6)
+        int _pCounter = math.max(0, 100 - _pPrimary - _pAlt)
+        bool _inFez = not na(_fezHiPx) and not na(_fezLoPx) and close <= _fezHiPx and close >= _fezLoPx
+        string _loc = _inFez ? ("FEZ " + f_wtTf(_fezLoW) + "↔" + f_wtTf(_fezHiW)) : (not na(_fezHiPx) and close > _fezHiPx ? "above network" : not na(_fezLoPx) and close < _fezLoPx ? "below network" : "mid-network")
+        string _bw = netBias == 1 ? "bullish" : netBias == -1 ? "bearish" : "flat"
+        // narrative — which interaction price is currently attempting
+        string _narr = "Price " + (_inFez ? "is oscillating inside the FEZ corridor" : "is travelling between nodes")
+        if _fromIdx >= 0
+            float _fp = array.get(nPx, _fromIdx)
+            _narr := _narr + ", having left the " + f_wtTf(array.get(nWt, _fromIdx)) + " " + (array.get(nDir, _fromIdx) == 1 ? "demand" : "supply") + " flip @ " + str.tostring(math.round_to_mintick(_fp)) + " (" + (_fp < close ? "lower" : "upper") + ")"
+        _narr := _narr + ".\n"
+        if _toIdx >= 0
+            float _tp = array.get(nPx, _toIdx)
+            _narr := _narr + "It is now attacking the " + f_wtTf(array.get(nWt, _toIdx)) + " " + (array.get(nDir, _toIdx) == 1 ? "demand" : "supply") + " node @ " + str.tostring(math.round_to_mintick(_tp)) + " (" + (_tp > close ? "upper" : "lower") + "), " + _bw + " bias " + str.tostring(_pPrimary) + "%."
+            if _thenIdx >= 0
+                _narr := _narr + "\nIf consumed, next objective " + f_cpNode(_thenIdx) + "."
+        else
+            _narr := _narr + "No bias-side target left — likely at an objective; watch for absorption / reversal."
+        table.cell(coPilot, 0, 0, "◆ NETWORK CO-PILOT   " + (netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT"), text_color = #22d3ee, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 1, "Price " + str.tostring(math.round_to_mintick(close)) + "   ·   " + _loc, text_color = color.white, text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 2, "PRIMARY " + str.tostring(_pPrimary) + "%   → " + f_cpNode(_toIdx) + "  → " + f_cpNode(_thenIdx), text_color = #5aff9e, text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 3, "ALTERNATE " + str.tostring(_pAlt) + "%   → " + f_cpNode(_altIdx), text_color = color.yellow, text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 4, "COUNTER " + str.tostring(_pCounter) + "%   → " + f_cpNode(_ctrIdx), text_color = #ff8a8a, text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 5, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.tiny, text_halign = text.align_left)
+        table.cell(coPilot, 0, 6, _narr, text_color = #d9e6ff, text_size = size.small, text_halign = text.align_left)
