@@ -44,6 +44,17 @@ float  effThresh      = input.float(0.65, "Efficiency Threshold",      group = G
 float  dispThresh     = input.float(1.5,  "Displacement ATR Threshold",group = GRPL, minval = 0.5, maxval = 5.0, step = 0.1)
 float  convMult       = input.float(0.01, "Convexity ATR Multiplier",  group = GRPL, minval = 0.001, step = 0.001)
 float  chochBufferATR = input.float(0.75, "Direction CHoCH Buffer (ATR)", group = GRPL, minval = 0.0, maxval = 3.0, step = 0.05)
+bool   useStrictStructure = input.bool (true, "Use Strict Structure",     group = GRPL)
+int    acceptBars     = input.int  (2,    "Flipzone Acceptance Bars",     group = GRPL, minval = 1, maxval = 10)
+int    obMaxBars      = input.int  (50,   "OB Max Valid Bars",            group = GRPL, minval = 10, maxval = 200)
+int    inducLookback  = input.int  (80,   "Inducement Lookback Bars",     group = GRPL, minval = 10)
+float  inducZoneWidth = input.float(0.25, "Inducement Zone Half-Width (ATR)", group = GRPL, minval = 0.05, step = 0.05)
+int    liqSweepLookback = input.int(10,   "Sweep Lookback Bars",          group = GRPL, minval = 3, maxval = 30)
+float  liqRadius      = input.float(0.25, "Liquidity Radius (x ATR)",     group = GRPL, minval = 0.1, step = 0.05)
+float  liqAgDecay     = input.float(0.95, "Liquidity Age Decay",          group = GRPL, minval = 0.80, maxval = 1.0, step = 0.01)
+bool   requireLiqSweep = input.bool(true, "Require Liquidity Sweep",      group = GRPL)
+int    resetBars      = input.int  (20,   "Min Bars Before Reset",        group = GRPL, minval = 5)
+int    beliefSmooth   = input.int  (3,    "Belief EMA Smoothing",         group = GRPL, minval = 1, maxval = 10)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART A — INVISIBLE NETWORK ENGINE (embedded)
@@ -252,11 +263,98 @@ f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dis
     bool  _rImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT
     bool  _bDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
     bool  _rDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+    bool  _bCS  = _csm >  _cth and _csm[1] <=  _cth
+    bool  _rCS  = _csm < -_cth and _csm[1] >= -_cth
     bool  _vd70 = math.abs(_vel) < math.abs(_vel[1]) * 0.7
     bool  _vd50 = math.abs(_vel) < math.abs(_vel[1]) * 0.5
-    [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bImp, _rImp, _bDec, _rDec, _vd70, _vd50]
+    [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bImp, _rImp, _bDec, _rDec, _bCS, _rCS, _vd70, _vd50]
 
-[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, phys_vd70, phys_vd50] = request.security(syminfo.tickerid, f_ltf("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead = barmerge.lookahead_off)
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullConvShift, bearConvShift, phys_vd70, phys_vd50] = request.security(syminfo.tickerid, f_ltf("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead = barmerge.lookahead_off)
+
+// ── CHART-CONTEXT MARKET STRUCTURE (Section 4) — drives the lifecycle/spawn ────
+float structPivH = ta.pivothigh(high, structLenL, structLenL)
+float structPivL = ta.pivotlow (low,  structLenL, structLenL)
+var float lastPivHigh = na
+var float prevPivHigh = na
+var float lastPivLow  = na
+var float prevPivLow  = na
+var int   structBias  = 0
+if not na(structPivH)
+    prevPivHigh := lastPivHigh
+    lastPivHigh := structPivH
+if not na(structPivL)
+    prevPivLow  := lastPivLow
+    lastPivLow  := structPivL
+bool isHH = not na(lastPivHigh) and not na(prevPivHigh) and lastPivHigh > prevPivHigh
+bool isLH = not na(lastPivHigh) and not na(prevPivHigh) and lastPivHigh < prevPivHigh
+bool isHL = not na(lastPivLow)  and not na(prevPivLow)  and lastPivLow  > prevPivLow
+bool isLL = not na(lastPivLow)  and not na(prevPivLow)  and lastPivLow  < prevPivLow
+var float prevSwingHigh = na
+var float prevSwingLow  = na
+var float currSwingHigh = na
+var float currSwingLow  = na
+float swPivH = ta.pivothigh(high, pivotLen, pivotLen)
+float swPivL = ta.pivotlow (low,  pivotLen, pivotLen)
+if not na(swPivH)
+    prevSwingHigh := na(currSwingHigh) ? swPivH : currSwingHigh
+    currSwingHigh := swPivH
+if not na(swPivL)
+    prevSwingLow  := na(currSwingLow)  ? swPivL : currSwingLow
+    currSwingLow  := swPivL
+bool bullBOS = not na(prevSwingHigh) and close > prevSwingHigh
+bool bearBOS = not na(prevSwingLow)  and close < prevSwingLow
+bool bullCHoCH = not na(prevSwingHigh) and close > prevSwingHigh + atr * chochBufferATR
+bool bearCHoCH = not na(prevSwingLow)  and close < prevSwingLow  - atr * chochBufferATR
+if useStrictStructure
+    if isHH and isHL
+        structBias := 1
+    if isLH and isLL
+        structBias := -1
+else
+    if bullBOS
+        structBias := 1
+    if bearBOS
+        structBias := -1
+// Section 5 — pivot memory (order-block origin for the spawn engine)
+float pivH = ta.pivothigh(high, pivotLen, pivotLen)
+float pivL = ta.pivotlow (low,  pivotLen, pivotLen)
+var float lastPivotPrice = na
+var int   lastPivotBar   = na
+var int   lastPivotDir   = 0
+var float prevPivotPrice = na
+var int   prevPivotBar   = na
+var int   prevPivotDir   = 0
+float pivotEventPrice = na
+int   pivotEventBar   = na
+int   pivotEventDir   = 0
+if not na(pivH)
+    pivotEventPrice := pivH
+    pivotEventBar   := bar_index - pivotLen
+    pivotEventDir   := 1
+else if not na(pivL)
+    pivotEventPrice := pivL
+    pivotEventBar   := bar_index - pivotLen
+    pivotEventDir   := -1
+if pivotEventDir != 0
+    prevPivotPrice := lastPivotPrice
+    prevPivotBar   := lastPivotBar
+    prevPivotDir   := lastPivotDir
+    lastPivotPrice := pivotEventPrice
+    lastPivotBar   := pivotEventBar
+    lastPivotDir   := pivotEventDir
+// Section 7 — inducement / flipzone price finder
+f_findInducPrice(int _anchorRefBar, float _anchorTop, float _anchorBot, int _lookback) =>
+    float _best     = na
+    float _bestDist = na
+    int   _maxI     = math.min(_lookback, bar_index - _anchorRefBar)
+    if _maxI >= 1
+        for i = 1 to _maxI
+            if high[i] < _anchorTop and low[i] > _anchorBot
+                float _d = math.abs((bar_index - i) - _anchorRefBar)
+                if na(_bestDist) or _d < _bestDist
+                    _bestDist := _d
+                    _best     := (high[i] + low[i]) / 2.0
+    _best
 
 // ── FIXED-TF STRUCTURE ENGINE — verbatim f_se (sole lifecycle authority) ──────
 f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT, simple float _dispT, simple float _convM, simple float _impM, simple float _chBuf, simple int _effL) =>
@@ -479,27 +577,67 @@ float obs_LiquidityScore  = math.min(obs_DecayScore * 0.4 + obs_CurvatureScore *
 string ie1a_currentPhase    = l0_phaseCanon
 float  ie1a_phaseConfidence = math.max(20.0, math.min(100.0, fractalStackScore * 0.50 + nz(se5_mf) * 0.30 + nz(se5_wp) * 0.20))
 
-// ── Engine objects sourced straight from the M5 (L0) f_se structure export ────
-int    direction          = l0_dir
-int    displayWaveDir_M5   = l0_dir
-float  flipTop            = se5_ft
-float  flipBot            = se5_fb
-float  point4OriginHigh    = se5_p4h
-float  point4OriginLow     = se5_p4l
-float  inducZoneHigh       = na
-float  inducZoneLow        = na
-bool   bullBOS             = nz(se5_bos) == 1
-bool   bearBOS             = nz(se5_bos) == -1
-float  convexityMaturity   = nz(se5_cm)
+// ── SECTION 8 — WAVE CONTEXT STATE (var; assigned by the Spawn Engine below) ──
+var int   direction     = 0
+var float flipTop       = na
+var float flipBot       = na
+var int   obBirthBar    = na
+var int   barsInZone    = 0
+var int   contBar       = na
+var float point4OriginHigh = na
+var float point4OriginLow  = na
+var int   point4OriginBar  = na
+var float flipzoneInducPrice = na
+var float flipzoneInducLow   = na
+var float flipzoneInducHigh  = na
+var float inducExpOriginHigh  = na
+var float inducExpExtremeLow  = na
+var float inducExpOriginLow   = na
+var float inducExpExtremeHigh = na
+var float inducRetrOriginHigh  = na
+var float inducRetrExtremeLow  = na
+var float inducRetrOriginLow   = na
+var float inducRetrExtremeHigh = na
+var float inducZoneLow  = na
+var float inducZoneHigh = na
 var float cycleHigh = na
 var float cycleLow  = na
-var int  _l0DirPrev = 0
-if l0_dir != _l0DirPrev
-    cycleHigh := high
-    cycleLow  := low
-    _l0DirPrev := l0_dir
-cycleHigh := na(cycleHigh) ? high : math.max(cycleHigh, high)
-cycleLow  := na(cycleLow)  ? low  : math.min(cycleLow,  low)
+var int   waveGeneration    = 0
+var int   entryCycle        = 0
+var bool  isRecursiveWave   = false
+var int   waveDepth         = 0
+var int   lastSpawnDir      = 0
+var bool  recursiveComplete = false
+int displayWaveDir_M5 = l0_dir
+float _g_highestAB = ta.highest(high, acceptBars)
+float _g_lowestAB  = ta.lowest (low,  acceptBars)
+var array<float> cycleObTop    = array.new_float(4, na)
+var array<float> cycleObBot    = array.new_float(4, na)
+var array<float> cycleFlipTop  = array.new_float(4, na)
+var array<float> cycleFlipBot  = array.new_float(4, na)
+var array<float> cycleP4High   = array.new_float(4, na)
+var array<float> cycleP4Low    = array.new_float(4, na)
+var array<int>   cycleStartBar = array.new_int  (4, na)
+var array<int>   cycleDir      = array.new_int  (4, 0)
+f_storeCycleState(int _cycle, float _obT, float _obB, float _fT, float _fB, float _p4H, float _p4L, int _startBar, int _dir) =>
+    int _idx = math.min(_cycle - 1, 3)
+    array.set(cycleObTop,    _idx, _obT)
+    array.set(cycleObBot,    _idx, _obB)
+    array.set(cycleFlipTop,  _idx, _fT)
+    array.set(cycleFlipBot,  _idx, _fB)
+    array.set(cycleP4High,   _idx, _p4H)
+    array.set(cycleP4Low,    _idx, _p4L)
+    array.set(cycleStartBar, _idx, _startBar)
+    array.set(cycleDir,      _idx, _dir)
+    _idx
+// Forward vars — prev-bar values consumed by Engine 1A / EDE / liqg before their
+// Section 10-12 assignments run later in the SAME bar (Letra's documented pattern).
+var float convexityMaturity = 0.0
+var float liqHeat           = 0.0
+var bool  nearFlipzone      = false
+var bool  closeInside       = false
+var bool  inductionEvidence = false
+var bool  preConvEvidence   = false
 
 // ── ENERGY DISSIPATION ENGINE (EDE — exact) ───────────────────────────────────
 int ede_state =
@@ -514,15 +652,14 @@ float ede_expansionEnergy = math.min(obs_ExpansionScore * 0.50 + (bullImpulse or
 float ede_dissipatedEnergy = math.min((ede_state >= 2 ? obs_DecayScore * 0.40 : 0.0) + (ede_state >= 3 ? obs_CurvatureScore * 0.30 : 0.0) + (ede_state >= 4 ? obs_LiquidityScore * 0.30 : 0.0), 100.0)
 float ede_dissipationProgress = math.min((ede_state >= 2 ? 25.0 : 0.0) + (ede_state >= 3 ? 25.0 : 0.0) + (ede_state >= 4 ? 25.0 : 0.0) + (ede_state >= 5 ? 25.0 : 0.0), 100.0)
 
-// ── RESOLUTION ENGINE (RE — recursive cycles simplified to a 2-cycle model) ───
-int re_expectedCycles  = 2
-int re_completedCycles = ede_state >= 5 ? 1 : 0
-float re_recursiveCompletionScore = float(re_completedCycles) / float(re_expectedCycles) * 100.0
+// ── RESOLUTION ENGINE (RE — real recursive cycles from the Spawn lifecycle) ───
+int re_expectedCycles  = math.max(1, math.min(waveDepth + 2, 4))
+int re_completedCycles = math.max(0, math.min(entryCycle, re_expectedCycles))
+float re_recursiveCompletionScore = re_expectedCycles > 0 ? math.min(float(re_completedCycles) / float(re_expectedCycles) * 100.0, 100.0) : 0.0
 float re_residualEnergy = math.max(0.0, ede_expansionEnergy - ede_dissipatedEnergy)
 bool re_objectiveReached = ede_state >= 5
 bool re_fullDissipation  = ede_dissipationProgress >= 75.0
 float re_dissipationProgress = ede_dissipationProgress
-bool recursiveComplete = false
 bool re_absorbedAndReturned = (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return") and recursiveComplete
 string re_resolutionState =
      re_absorbedAndReturned and re_fullDissipation and re_recursiveCompletionScore >= 75.0 ? "RESOLVED" :
@@ -591,13 +728,310 @@ bool  _cdpPAgree = re_resolutionState != "RESOLVED" and ede_dissipationProgress 
 float phaseConfidence = (_cdpSAgree ? 34.0 : 0.0) + (_cdpMAgree ? 33.0 : 0.0) + (_cdpPAgree ? 33.0 : 0.0)
 float phaseIntegrity  = math.max(0.0, math.min(100.0, phaseConfidence * 0.6 + (100.0 - math.min(ede_dissipationProgress, 100.0)) * 0.4))
 
+// ── SECTION 10 — LIQUIDITY HEATMAP (assigns liqHeat / liqSweepOK) ─────────────
+float _swH = ta.highest(high, liqSweepLookback)
+float _swL = ta.lowest (low,  liqSweepLookback)
+bool liqSweepBull = not na(flipTop) and _swH > flipTop
+bool liqSweepBear = not na(flipBot) and _swL < flipBot
+var array<float> liqLevels  = array.new_float()
+var array<float> liqWeights = array.new_float()
+var array<int>   liqAges    = array.new_int()
+float volAvg  = ta.sma(volume, 20)
+float normVol = volAvg > 0 ? volume[pivotLen] / volAvg : 1.0
+if not na(pivH) or not na(pivL)
+    float lvl   = not na(pivH) ? pivH : pivL
+    float swRng = (high[pivotLen] - low[pivotLen]) / math.max(atr, 1e-10)
+    array.push(liqLevels,  lvl)
+    array.push(liqWeights, normVol * swRng)
+    array.push(liqAges,    bar_index - pivotLen)
+if array.size(liqLevels) > 150
+    array.shift(liqLevels)
+    array.shift(liqWeights)
+    array.shift(liqAges)
+float wDensity      = 0.0
+float wDensityAbove = 0.0
+float wDensityBelow = 0.0
+float liqRadiusP    = atr * liqRadius
+float liqRadiusWide = atr * liqRadius * 3.0
+if array.size(liqLevels) > 0
+    for i = 0 to array.size(liqLevels) - 1
+        float lvl  = array.get(liqLevels,  i)
+        float wt   = array.get(liqWeights, i)
+        int   age  = bar_index - array.get(liqAges, i)
+        float dcy  = math.pow(liqAgDecay, age)
+        float dist = math.abs(close - lvl)
+        if dist < liqRadiusP
+            wDensity += wt * dcy
+        if dist < liqRadiusWide
+            if lvl > close
+                wDensityAbove += wt * dcy * (1.0 - dist / liqRadiusWide)
+            else
+                wDensityBelow += wt * dcy * (1.0 - dist / liqRadiusWide)
+float liqHeatRaw = math.min((wDensityAbove + wDensityBelow) / 2.0, 5.0) / 5.0 * 100.0
+liqHeat         := math.min(math.max(liqHeatRaw, 0.0), 100.0)
+string liqZone   = liqHeat < 30 ? "Open space" : liqHeat < 70 ? "Active" : "Congested"
+bool liqVacuum   = wDensity < 0.5
+bool liqSweepOK = not requireLiqSweep or (direction == 1 and (liqSweepBull or liqVacuum)) or (direction == -1 and (liqSweepBear or liqVacuum))
+
+// ── SECTION 11 — GEOMETRY ─────────────────────────────────────────────────────
+int   obAge = not na(obBirthBar) ? bar_index - obBirthBar : 0
+float originToExtreme = na
+if not na(point4OriginHigh) and not na(point4OriginLow)
+    float _orig = direction == 1 ? point4OriginLow : point4OriginHigh
+    float _extr = direction == 1 ? nz(cycleHigh, _orig) : nz(cycleLow, _orig)
+    originToExtreme := math.abs(_extr - _orig)
+float flipzoneWidth = not na(flipTop) and not na(flipBot) ? flipTop - flipBot : na
+float availableSpace = na
+if not na(flipTop) and not na(flipBot)
+    float _fzMid = (flipTop + flipBot) / 2.0
+    availableSpace := math.min(math.abs(close - _fzMid) / math.max(atr * 4.0, 1e-10) * 100.0, 100.0)
+string cycleCapacity = na(availableSpace) ? "–" : availableSpace >= 60 ? "ROOM: HIGH" : availableSpace >= 30 ? "ROOM: MID" : "ROOM: LOW"
+
+// ── SECTION 12 — WAVE INTELLIGENCE: similarity · convexity maturity · progress ─
+float ref_effNorm  = math.min(efficiency, 1.0)
+float ref_dispNorm = math.min(displacement / math.max(dispThresh * 2.0, 1e-10), 1.0)
+float ref_velNorm  = math.min(math.abs(velocity) / math.max(atr * 0.15, 1e-10), 1.0)
+float ref_curvNorm = math.min(math.abs(convSmooth) / math.max(atr * convMult * 2.0, 1e-10), 1.0)
+f_idealSim(float _eObs, float _dObs, float _vObs, float _cObs, float _eIdeal, float _dIdeal, float _vIdeal, float _cIdeal) =>
+    float _diff = math.pow(_eObs - _eIdeal, 2) + math.pow(_dObs - _dIdeal, 2) + math.pow(_vObs - _vIdeal, 2) + math.pow(_cObs - _cIdeal, 2)
+    math.max(0.0, 100.0 * (1.0 - _diff / 4.0))
+float sim_Expansion    = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.85, 0.80, 0.80, 0.10)
+float sim_PreConv      = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.60, 0.55, 0.40, 0.50)
+float sim_Induction    = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.65, 0.60, 0.30, 0.60)
+float sim_Liquidity    = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.45, 0.85, 0.15, 0.80)
+float sim_Creation     = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.30, 0.70, 0.05, 0.90)
+float sim_Absorption   = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.20, 0.25, 0.10, 0.40)
+float sim_Retracement  = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.70, 0.65, 0.65, 0.25)
+float sim_DemandReturn = f_idealSim(ref_effNorm, ref_dispNorm, ref_velNorm, ref_curvNorm, 0.50, 0.40, 0.35, 0.20)
+float waveTotalRange   = not na(originToExtreme) ? originToExtreme : atr * 5.0
+float currentToFlipMid = not na(flipTop) and not na(flipBot) ? math.abs(close - (flipTop + flipBot) / 2.0) : atr * 4.0
+float currentToExtreme = direction == 1 ? math.abs(nz(cycleHigh, close + atr) - close) : math.abs(close - nz(cycleLow, close - atr))
+float _posNormDen = math.max(waveTotalRange, atr * 0.5)
+float posDistToCreation = math.min(currentToExtreme / _posNormDen * 100.0, 100.0)
+float expWeaknessScore = math.min(((efficiency < effThresh ? (1.0 - efficiency / math.max(effThresh, 1e-10)) * 40.0 : 0.0) + (obs_DecayScore * 0.30) + (math.abs(velocity) < math.abs(velocity[2]) * 0.6 ? 20.0 : 0.0)) * (100.0 / 90.0), 100.0)
+float inductionMatScore = math.min((inductionEvidence ? 35.0 : 0.0) + (obs_CurvatureScore * 0.35) + (preConvEvidence ? 20.0 : 0.0) + (displacement > dispThresh * 1.2 and (bullMomDecay or bearMomDecay) ? 10.0 : 0.0), 100.0)
+float liqMatScore = math.min((obs_LiquidityScore * 0.50) + (liqSweepBull or liqSweepBear ? 30.0 : 0.0) + (liqHeat > 60 ? 20.0 : liqHeat > 30 ? 10.0 : 0.0), 100.0)
+float rawConvexityMaturity = math.min(expWeaknessScore * 0.35 + inductionMatScore * 0.35 + liqMatScore * 0.30, 100.0)
+convexityMaturity := convexityMaturity + (2.0 / (beliefSmooth + 1)) * (rawConvexityMaturity - convexityMaturity)
+float _progressFromGeom = na
+if not na(point4OriginHigh) and not na(flipTop) and not na(flipBot)
+    float _origin  = direction == 1 ? point4OriginLow : point4OriginHigh
+    float _extreme = direction == 1 ? nz(cycleHigh, close + atr) : nz(cycleLow, close - atr)
+    float _fzMid   = (flipTop + flipBot) / 2.0
+    float _totalMove = math.abs(_extreme - _origin)
+    float _toFzMid   = math.abs(_extreme - _fzMid)
+    float _expProg   = _totalMove > 1e-10 ? math.min(math.abs(close - _origin) / _totalMove * 60.0, 60.0) : 30.0
+    float _retrMove  = math.abs(close - _extreme)
+    float _retrProg  = _toFzMid > 1e-10 ? math.min(_retrMove / math.max(_toFzMid, 1e-10) * 40.0, 40.0) : 0.0
+    _progressFromGeom := _expProg + _retrProg * math.min(obs_AbsorptionScore / 40.0, 1.0)
+float _geomProgress = nz(_progressFromGeom, 30.0)
+float _simAnchor =
+     sim_DemandReturn >= sim_Retracement and sim_DemandReturn >= sim_Absorption and sim_DemandReturn >= sim_Creation and sim_DemandReturn >= sim_Expansion ? 95.0 :
+     sim_Retracement  >= sim_Absorption and sim_Retracement  >= sim_Creation and sim_Retracement >= sim_Expansion ? 87.0 :
+     sim_Absorption   >= sim_Creation   and sim_Absorption   >= sim_Expansion ? 75.0 :
+     sim_Creation     >= sim_Liquidity  and sim_Creation     >= sim_Expansion ? 62.0 :
+     sim_Liquidity    >= sim_Induction  and sim_Liquidity    >= sim_Expansion ? 52.0 :
+     sim_Induction    >= sim_PreConv    and sim_Induction    >= sim_Expansion ? 43.0 :
+     sim_PreConv      >= sim_Expansion ? 33.0 : 22.0
+float _convWeight = math.max(0.0, 1.0 - math.abs(_simAnchor - 47.5) / 14.5)
+float _physProgress = _simAnchor + (convexityMaturity / 100.0) * (_simAnchor - 33.0) * 0.50 * _convWeight
+float rawWaveProgress = _geomProgress * 0.60 + _physProgress * 0.40
+var float waveProgress = 30.0
+waveProgress := waveProgress + (2.0 / (beliefSmooth + 1)) * (rawWaveProgress - waveProgress)
+waveProgress := math.max(0.0, math.min(100.0, waveProgress))
+float _bestSim = math.max(sim_Expansion, sim_PreConv, sim_Induction, sim_Liquidity, sim_Creation, sim_Absorption, sim_Retracement, sim_DemandReturn)
+float _geomConsistency = math.min((not na(originToExtreme) and originToExtreme > atr * 2.0 ? 30.0 : 0.0) + (not na(flipzoneWidth) and flipzoneWidth < atr * 4.0 ? 25.0 : 0.0) + (not na(cycleHigh) or not na(cycleLow) ? 20.0 : 0.0) + (direction != 0 ? 25.0 : 0.0), 100.0)
+var float waveModelFit = 50.0
+waveModelFit := waveModelFit + (2.0 / (beliefSmooth + 1)) * ((_bestSim * 0.55 + _geomConsistency * 0.45) - waveModelFit)
+waveModelFit := math.max(0.0, math.min(100.0, waveModelFit))
+
+// ── SECTION 12A — BELIEF ENGINE ───────────────────────────────────────────────
+preConvEvidence   := bullMomDecay or bearMomDecay
+inductionEvidence := (direction == 1 and bearImpulse and structBias == 1) or (direction == -1 and bullImpulse and structBias == -1)
+bool liquidityEvidence = obs_LiquidityScore > 50.0 and obs_DecayScore > 40.0
+float _expPosMult = waveProgress < 40.0 ? 1.20 : waveProgress < 60.0 ? 0.80 : 0.50
+float rawExpansionBelief = math.min((obs_ExpansionScore * 0.45 + (bullImpulse or bearImpulse ? 30.0 : 0.0) + (efficiency > effThresh * 1.1 ? 15.0 : 0.0) + sim_Expansion * 0.10) * _expPosMult, 100.0)
+float _convPosMult = (waveProgress >= 30.0 and waveProgress <= 65.0) ? 1.30 : 0.70
+float rawConvexityBelief = math.min((obs_DecayScore * 0.30 + obs_CurvatureScore * 0.25 + (preConvEvidence ? 15.0 : 0.0) + (inductionEvidence ? 10.0 : 0.0) + (liquidityEvidence ? 5.0 : 0.0) + convexityMaturity * 0.08) * _convPosMult, 100.0)
+float _creatPosMult = (waveProgress >= 45.0 and waveProgress <= 68.0) ? 1.40 : 0.60
+float rawCreationBelief = math.min(((convexityMaturity > 50 ? convexityMaturity * 0.12 : 0.0) + (obs_DecayScore > 60 ? obs_DecayScore * 0.20 : 0.0) + (obs_LiquidityScore > 50 ? obs_LiquidityScore * 0.20 : 0.0) + (obs_AbsorptionScore > 20 ? obs_AbsorptionScore * 0.15 : 0.0) + (not na(cycleHigh) and not na(cycleLow) and ((direction == 1 and high >= nz(cycleHigh, high) * 0.998) or (direction == -1 and low <= nz(cycleLow, low) * 1.002)) ? 20.0 : 0.0) + sim_Creation * 0.10 + (posDistToCreation < 15.0 ? (15.0 - posDistToCreation) * 1.0 : 0.0)) * _creatPosMult, 100.0)
+float rawAbsorptionBelief = math.min(obs_AbsorptionScore * 0.50 + (efficiency < effThresh * 0.6 ? 25.0 : 0.0) + (displacement < dispThresh * 0.5 ? 15.0 : 0.0) + sim_Absorption * 0.10, 100.0)
+float rawRetracementBelief = math.min(((direction == 1 and bearImpulse) or (direction == -1 and bullImpulse) ? 45.0 : 0.0) + (rawAbsorptionBelief > 50 ? rawAbsorptionBelief * 0.30 : 0.0) + (obs_CurvatureScore > 40 ? 15.0 : 0.0) + sim_Retracement * 0.10, 100.0)
+float rawDemandReturnBelief = math.min((not na(flipTop) and not na(flipBot) and close <= flipTop and close >= flipBot ? 35.0 : 0.0) + (rawRetracementBelief > 60 ? rawRetracementBelief * 0.30 : 0.0) + (liqHeat > 50 ? liqHeat * 0.15 : 0.0) + (liqSweepBull or liqSweepBear ? 20.0 : 0.0) + sim_DemandReturn * 0.10, 100.0)
+var float expansionBelief    = 0.0
+var float convexityBelief    = 0.0
+var float creationBelief     = 0.0
+var float absorptionBelief   = 0.0
+var float retracementBelief  = 0.0
+var float demandReturnBelief = 0.0
+float bSmAlpha = 2.0 / (beliefSmooth + 1)
+expansionBelief    := expansionBelief    + bSmAlpha * (nz(rawExpansionBelief, 0.0)    - expansionBelief)
+convexityBelief    := convexityBelief    + bSmAlpha * (nz(rawConvexityBelief, 0.0)    - convexityBelief)
+creationBelief     := creationBelief     + bSmAlpha * (nz(rawCreationBelief, 0.0)     - creationBelief)
+absorptionBelief   := absorptionBelief   + bSmAlpha * (nz(rawAbsorptionBelief, 0.0)   - absorptionBelief)
+retracementBelief  := retracementBelief  + bSmAlpha * (nz(rawRetracementBelief, 0.0)  - retracementBelief)
+demandReturnBelief := demandReturnBelief + bSmAlpha * (nz(rawDemandReturnBelief, 0.0) - demandReturnBelief)
+
+// ── SECTION 13 — WAVE SPAWN ENGINE (M5-governed; drawing stripped, state only) ─
+f_spawnWave(int _newDir) =>
+    float _obTop   = _newDir == 1 ? lastPivotPrice : prevPivotPrice
+    float _obBot   = _newDir == 1 ? prevPivotPrice : lastPivotPrice
+    int   _anchBar = prevPivotBar
+    float _fzIP    = f_findInducPrice(_anchBar, _obTop, _obBot, inducLookback)
+    [_obTop, _obBot, _anchBar, _fzIP, not na(_fzIP) ? _fzIP - atr * inducZoneWidth : na, not na(_fzIP) ? _fzIP + atr * inducZoneWidth : na]
+bool _allowSpawn = l0_dir != 0 and l0_dir != direction
+if _allowSpawn
+    int _newDir = l0_dir
+    [_obTop, _obBot, _anchBar, _fzIP, _fzL, _fzH] = f_spawnWave(_newDir)
+    _obTop := nz(l0_p4High, _obTop)
+    _obBot := nz(l0_p4Low, _obBot)
+    lastSpawnDir       := _newDir
+    direction          := _newDir
+    flipTop            := _obTop
+    flipBot            := _obBot
+    barsInZone         := 0
+    obBirthBar         := bar_index
+    contBar            := na
+    point4OriginHigh   := _obTop
+    point4OriginLow    := _obBot
+    point4OriginBar    := bar_index
+    flipzoneInducPrice := _fzIP
+    flipzoneInducLow   := _fzL
+    flipzoneInducHigh  := _fzH
+    inducExpOriginHigh   := na
+    inducExpExtremeLow   := na
+    inducExpOriginLow    := na
+    inducExpExtremeHigh  := na
+    inducRetrOriginHigh  := na
+    inducRetrExtremeLow  := na
+    inducRetrOriginLow   := na
+    inducRetrExtremeHigh := na
+    inducZoneLow         := na
+    inducZoneHigh        := na
+    cycleHigh            := high
+    cycleLow             := low
+    isRecursiveWave      := false
+    entryCycle           := 0
+    waveDepth            := 0
+if direction == 1 and high > nz(cycleHigh, high)
+    cycleHigh := high
+if direction == -1 and low < nz(cycleLow, low)
+    cycleLow := low
+bool expInducBuyEv  = direction == 1  and bearImpulse and structBias ==  1
+bool expInducSellEv = direction == -1 and bullImpulse and structBias == -1
+if expInducBuyEv and na(inducExpOriginHigh)
+    inducExpOriginHigh := nz(point4OriginHigh, nz(cycleHigh, high))
+    inducExpExtremeLow := low
+    inducZoneLow       := nz(point4OriginHigh, low) - atr * inducZoneWidth
+    inducZoneHigh      := nz(point4OriginHigh, low) + atr * inducZoneWidth
+if expInducSellEv and na(inducExpOriginLow)
+    inducExpOriginLow   := nz(point4OriginLow, nz(cycleLow, low))
+    inducExpExtremeHigh := high
+    inducZoneLow        := nz(point4OriginLow, high) - atr * inducZoneWidth
+    inducZoneHigh       := nz(point4OriginLow, high) + atr * inducZoneWidth
+if not na(inducExpExtremeLow) and direction == 1 and low < inducExpExtremeLow
+    inducExpExtremeLow := low
+    inducZoneLow       := low - atr * inducZoneWidth
+    inducZoneHigh      := low + atr * inducZoneWidth
+if not na(inducExpExtremeHigh) and direction == -1 and high > inducExpExtremeHigh
+    inducExpExtremeHigh := high
+    inducZoneLow        := high - atr * inducZoneWidth
+    inducZoneHigh       := high + atr * inducZoneWidth
+nearFlipzone := not na(flipTop) and not na(flipBot) and close <= flipTop * 1.02 and close >= flipBot * 0.98
+bool retrInducBuyEv  = direction == 1  and bullImpulse and structBias == -1 and nearFlipzone
+bool retrInducSellEv = direction == -1 and bearImpulse and structBias ==  1 and nearFlipzone
+if retrInducBuyEv and na(inducRetrOriginLow)
+    inducRetrOriginLow   := nz(cycleLow, low)
+    inducRetrExtremeHigh := high
+    inducZoneLow         := high - atr * inducZoneWidth
+    inducZoneHigh        := high + atr * inducZoneWidth
+if retrInducSellEv and na(inducRetrOriginHigh)
+    inducRetrOriginHigh := nz(cycleHigh, high)
+    inducRetrExtremeLow := low
+    inducZoneLow        := low - atr * inducZoneWidth
+    inducZoneHigh       := low + atr * inducZoneWidth
+if not na(inducRetrExtremeHigh) and direction == 1 and high > inducRetrExtremeHigh
+    inducRetrExtremeHigh := high
+    inducZoneLow         := high - atr * inducZoneWidth
+    inducZoneHigh        := high + atr * inducZoneWidth
+if not na(inducRetrExtremeLow) and direction == -1 and low < inducRetrExtremeLow
+    inducRetrExtremeLow := low
+    inducZoneLow        := low - atr * inducZoneWidth
+    inducZoneHigh       := low + atr * inducZoneWidth
+closeInside        := not na(flipTop) and close <= flipTop and close >= flipBot
+bool priceInDemand = not na(flipBot) and low < flipBot and (not na(point4OriginHigh) and low <= point4OriginHigh)
+bool priceInSupply = not na(flipTop) and high > flipTop and (not na(point4OriginLow) and high >= point4OriginLow)
+bool trueCHoCH_bull = direction ==  1 and priceInDemand and bullImpulse and liqSweepOK
+bool trueCHoCH_bear = direction == -1 and priceInSupply and bearImpulse and liqSweepOK
+bool structFlipBull = direction ==  1 and bullConvShift and structBias == -1
+bool structFlipBear = direction == -1 and bearConvShift and structBias ==  1
+bool recursiveTrigger = (trueCHoCH_bull or trueCHoCH_bear or structFlipBull or structFlipBear) and (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return") and demandReturnBelief > 40 and direction != 0 and not na(flipTop)
+var bool recursiveJustFired = false
+var int  recursiveFiredBar  = na
+if recursiveTrigger and (na(recursiveFiredBar) or (bar_index - recursiveFiredBar) > resetBars)
+    recursiveJustFired := true
+    recursiveFiredBar  := bar_index
+    recursiveComplete  := true
+else
+    recursiveJustFired := false
+if recursiveJustFired
+    int _store = f_storeCycleState(math.max(entryCycle, 1), flipTop, flipBot, flipTop, flipBot, point4OriginHigh, point4OriginLow, point4OriginBar, direction)
+    waveGeneration  := waveGeneration + 1
+    entryCycle      := math.min(entryCycle + 1, 4)
+    isRecursiveWave := true
+    waveDepth       := entryCycle
+    int _nextDir = l0_dir != 0 ? l0_dir : ((bullImpulse or bullConvShift) ? 1 : -1)
+    [_obTop2, _obBot2, _anchBar2, _fzIP2, _fzL2, _fzH2] = f_spawnWave(_nextDir)
+    lastSpawnDir       := _nextDir
+    direction          := l0_dir != 0 ? l0_dir : _nextDir
+    flipTop            := _obTop2
+    flipBot            := _obBot2
+    barsInZone         := 0
+    obBirthBar         := bar_index
+    point4OriginHigh   := _obTop2
+    point4OriginLow    := _obBot2
+    point4OriginBar    := bar_index
+    flipzoneInducPrice := _fzIP2
+    flipzoneInducLow   := _fzL2
+    flipzoneInducHigh  := _fzH2
+    inducExpOriginHigh   := na
+    inducExpExtremeLow   := na
+    inducExpOriginLow    := na
+    inducExpExtremeHigh  := na
+    inducRetrOriginHigh  := na
+    inducRetrExtremeLow  := na
+    inducRetrOriginLow   := na
+    inducRetrExtremeHigh := na
+    inducZoneLow         := na
+    inducZoneHigh        := na
+    cycleHigh            := high
+    cycleLow             := low
+    contBar              := bar_index
+int  barsSinceCont = not na(contBar) ? bar_index - contBar : (not na(obBirthBar) ? bar_index - obBirthBar : 0)
+bool bullInvalid  = direction ==  1 and close < flipBot - atr * 0.5
+bool bearInvalid  = direction == -1 and close > flipTop + atr * 0.5
+bool opposingMove = (direction == 1 and bearImpulse) or (direction == -1 and bullImpulse)
+bool hardInvalid  = bullInvalid or bearInvalid
+bool softReset    = barsSinceCont > resetBars and opposingMove and (ie1a_currentPhase != "Demand Return" and ie1a_currentPhase != "Supply Return") and demandReturnBelief < 30 and expansionBelief < 30
+if direction != l0_dir and (hardInvalid or softReset)
+    direction         := 0
+    lastSpawnDir      := 0
+    flipTop           := na
+    flipBot           := na
+    contBar           := na
+    obBirthBar        := na
+    barsInZone        := 0
+    isRecursiveWave   := false
+    entryCycle        := 0
+    waveDepth         := 0
+    recursiveComplete := false
+
 // ── Legacy aliases so the panels/Senseei layer read the EXACT engine outputs ──
 int    waveDir   = l0_dir
 int    stackDir  = fractalStackDir
 float  stackPct  = fractalStackScore
 float  waveOrigin = se5_inv
 float  waveObj    = nz(liqg_target, se5_tgt)
-float  waveProgress = nz(se5_wp, 30.0)
 string wavePhase  = currentDisplayPhase
 string waveDirLbl = waveDir == 1 ? "Bullish" : waveDir == -1 ? "Bearish" : "Neutral"
 string waveNarr   = _cdpDir + " wave · " + str.tostring(math.round(waveProgress)) + "% → " + (na(waveObj) ? "forming" : str.tostring(math.round_to_mintick(waveObj))) + " · " + currentDisplayPhase + "."
