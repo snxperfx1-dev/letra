@@ -15,7 +15,7 @@ indicator("Invisible Network", overlay = true, max_lines_count = 500, max_labels
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string GRP = "Invisible Network"
 bool   webMode      = input.bool (true,  "WEB MODE (master) — map the network", group = GRP, tooltip = "Web Mode is purely informational. It observes the invisible network of FU/flip conversations and never alters detection. Turn off to hide the entire network overlay.")
-float  wickFrac     = input.float(0.4, "FU spike: min wick / range",        group = GRP, minval = 0.2, maxval = 0.9, step = 0.05)
+float  wickFrac     = input.float(0.3, "FU spike: min wick / range",        group = GRP, minval = 0.15, maxval = 0.9, step = 0.05)
 int    lookback     = input.int  (3,   "FU spike: structure lookback",      group = GRP, minval = 2, maxval = 30)
 int    authMin      = input.int  (45,  "Min node authority to show",        group = GRP, minval = 0, maxval = 120)
 int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
@@ -23,6 +23,7 @@ int    nodeMax      = input.int  (250, "Max remembered nodes",              grou
 bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
 bool   showConsumed = input.bool (true,  "Show CONSUMED / historical nodes (faint)", group = GRP)
 bool   showConversations = input.bool (true, "Show CONVERSATIONS (dashed web)", group = GRP, tooltip = "Physically draws the node-to-node money-flow conversations as light dashed edges in the right margin: how upper/lower FUs and flip zones talk to each other.")
+int    webMaxEdges  = input.int  (60,  "Conversation web — max edges",     group = GRP, minval = 5, maxval = 200, tooltip = "How many of the strongest nodes the conversation web connects. Raise to see MORE conversations; lower to keep it clean.")
 bool   showFlips    = input.bool (true,  "Show FLIP zones (Web 1.1)",       group = GRP)
 bool   tfColors     = input.bool (true,  "Color nodes by timeframe (Engine 2.8)", group = GRP)
 bool   showFEZ      = input.bool (true,  "Show FEZ corridor (Engine 2.5)",  group = GRP)
@@ -57,8 +58,17 @@ f_fuPool(simple float _wf, simple int _lb) =>
     float _rng = math.max(high - low, 1e-10)
     float _pHi = ta.highest(high, _lb)[1]
     float _pLo = ta.lowest(low,  _lb)[1]
-    bool  _bear = not na(_pHi) and high > _pHi and close < _pHi and (high - math.max(open, close)) / _rng >= _wf
-    bool  _bull = not na(_pLo) and low  < _pLo and close > _pLo and (math.min(open, close) - low) / _rng >= _wf
+    float _uw  = (high - math.max(open, close)) / _rng     // upper-wick fraction
+    float _lw  = (math.min(open, close) - low)  / _rng     // lower-wick fraction
+    bool  _localTop = high >= ta.highest(high, _lb)        // this bar is the local high
+    bool  _localBot = low  <= ta.lowest(low,  _lb)         // this bar is the local low
+    // FU / FLIP = a dominant rejection wick at a local extreme. It now counts
+    // whether the bar SWEPT prior structure (the classic FU spike) OR simply
+    // REJECTED at a local extreme (an ordinary flip zone). The old logic required
+    // a clean sweep + close-back-inside, which missed most real flips — this
+    // captures far more genuine structures so the conversation web fills in.
+    bool  _bear = _uw >= _wf and ((not na(_pHi) and high >= _pHi and close < _pHi) or (_localTop and close < open))
+    bool  _bull = _lw >= _wf and ((not na(_pLo) and low  <= _pLo and close > _pLo) or (_localBot and close > open))
     if _bear
         _dir  := -1
         _tip  := high
@@ -455,10 +465,11 @@ if barstate.islast and webMode
     if showConversations and array.size(nPx) > 0
         array<int> _cv = array.new_int()
         for _i = 0 to array.size(nPx) - 1
-            if (showConsumed or array.get(nState, _i) != 2) and f_auth(_i) >= authMin
+            if showConsumed or array.get(nState, _i) != 2
                 array.push(_cv, _i)
-        // keep the strongest ~28 nodes to stay clean
-        if array.size(_cv) > 28
+        // keep the strongest webMaxEdges nodes (its own gate, NOT the display
+        // authMin — so the web shows far more conversations than the levels do)
+        if array.size(_cv) > webMaxEdges
             for _a = 1 to array.size(_cv) - 1
                 int   _key = array.get(_cv, _a)
                 float _ka  = f_auth(_key)
@@ -472,7 +483,7 @@ if barstate.islast and webMode
                     else
                         _go := false
                 array.set(_cv, _b + 1, _key)
-            while array.size(_cv) > 28
+            while array.size(_cv) > webMaxEdges
                 array.pop(_cv)
         // sort the kept nodes by price ascending → the vertical ladder order
         if array.size(_cv) > 1
