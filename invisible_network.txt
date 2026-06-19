@@ -273,6 +273,26 @@ f_pathNodes(bool _aheadSide) =>
             array.set(_r, _b + 1, _key)
     _r
 
+// FUTURE engine — the highest-timeframe objective node on one side of price
+// (timeframe weight dominates, authority breaks ties). This links the near-term
+// path to the larger HTF story: where price continues AFTER the current/alternate
+// path completes. _ahead=true → bias direction; false → opposite. _skip excludes
+// the immediate node so a genuinely higher/further objective is returned.
+f_htfNode(bool _ahead, int _skip) =>
+    int   _best = -1
+    float _rank = -1.0
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            if _i != _skip and array.get(nState, _i) != 2
+                float _np = array.get(nPx, _i)
+                bool  _onSide = netBias == -1 ? (_ahead ? _np < close : _np > close) : (_ahead ? _np > close : _np < close)
+                if _onSide
+                    float _r2 = array.get(nWt, _i) * 1000.0 + f_auth(_i)
+                    if _r2 > _rank
+                        _rank := _r2
+                        _best := _i
+    _best
+
 // ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
 var array<line>  route_lines = array.new<line>()
 var array<line>  conv_lines  = array.new<line>()
@@ -642,7 +662,7 @@ if barstate.islast and webMode
     //    probabilities, and a plain-language note on the interaction in progress.
     if showCoPilot
         if na(coPilot)
-            coPilot := table.new(position.bottom_right, 1, 7, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 35), frame_width = 2, border_width = 0)
+            coPilot := table.new(position.bottom_right, 1, 10, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
         array<int> _fwdCP = f_pathNodes(true)
         array<int> _bwdCP = f_pathNodes(false)
         int _toIdx   = array.size(_fwdCP) > 0 ? array.get(_fwdCP, 0) : -1
@@ -653,6 +673,11 @@ if barstate.islast and webMode
         int _pPrimary = math.round(_routeConf)
         int _pAlt     = math.round((100.0 - _routeConf) * 0.6)
         int _pCounter = math.max(0, 100 - _pPrimary - _pAlt)
+        // FUTURE PROJECTION — link the near-term path to the higher-TF objectives
+        int _futC1 = f_htfNode(true,  _toIdx)              // HTF objective the CURRENT path feeds
+        int _futC2 = f_htfNode(true,  _futC1 >= 0 ? _futC1 : _toIdx)
+        int _futA1 = f_htfNode(false, _ctrIdx)             // HTF objective the ALTERNATE path feeds
+        bool _futC2ok = _futC2 >= 0 and _futC2 != _toIdx and _futC2 != _futC1
         bool _inFez = not na(_fezHiPx) and not na(_fezLoPx) and close <= _fezHiPx and close >= _fezLoPx
         string _loc = _inFez ? ("FEZ " + f_wtTf(_fezLoW) + "↔" + f_wtTf(_fezHiW)) : (not na(_fezHiPx) and close > _fezHiPx ? "above network" : not na(_fezLoPx) and close < _fezLoPx ? "below network" : "mid-network")
         string _bw = netBias == 1 ? "bullish" : netBias == -1 ? "bearish" : "flat"
@@ -669,10 +694,18 @@ if barstate.islast and webMode
                 _narr := _narr + "\nIf consumed, next objective " + f_cpNode(_thenIdx) + "."
         else
             _narr := _narr + "No bias-side target left — likely at an objective; watch for absorption / reversal."
-        table.cell(coPilot, 0, 0, "◆ NETWORK CO-PILOT   " + (netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT"), text_color = #22d3ee, text_size = size.normal, text_halign = text.align_left)
-        table.cell(coPilot, 0, 1, "Price " + str.tostring(math.round_to_mintick(close)) + "   ·   " + _loc, text_color = color.white, text_size = size.small, text_halign = text.align_left)
-        table.cell(coPilot, 0, 2, "PRIMARY " + str.tostring(_pPrimary) + "%   → " + f_cpNode(_toIdx) + "  → " + f_cpNode(_thenIdx), text_color = #5aff9e, text_size = size.small, text_halign = text.align_left)
-        table.cell(coPilot, 0, 3, "ALTERNATE " + str.tostring(_pAlt) + "%   → " + f_cpNode(_altIdx), text_color = color.yellow, text_size = size.small, text_halign = text.align_left)
-        table.cell(coPilot, 0, 4, "COUNTER " + str.tostring(_pCounter) + "%   → " + f_cpNode(_ctrIdx), text_color = #ff8a8a, text_size = size.small, text_halign = text.align_left)
-        table.cell(coPilot, 0, 5, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.tiny, text_halign = text.align_left)
-        table.cell(coPilot, 0, 6, _narr, text_color = #d9e6ff, text_size = size.small, text_halign = text.align_left)
+        // future story — beyond the immediate path
+        if _futC1 >= 0
+            _narr := _narr + "\nStory: once the current path completes it feeds the " + f_cpNode(_futC1) + " HTF objective" + (_futC2ok ? ", then " + f_cpNode(_futC2) : "") + "."
+        if _futA1 >= 0
+            _narr := _narr + " The alternate would instead route toward " + f_cpNode(_futA1) + "."
+        table.cell(coPilot, 0, 0, "◆ NETWORK CO-PILOT    " + (netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT"), text_color = #22d3ee, text_size = size.large, text_halign = text.align_left)
+        table.cell(coPilot, 0, 1, "Price " + str.tostring(math.round_to_mintick(close)) + "    ·    " + _loc, text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 2, "PRIMARY " + str.tostring(_pPrimary) + "%    → " + f_cpNode(_toIdx) + "   → " + f_cpNode(_thenIdx), text_color = #5aff9e, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 3, "ALTERNATE " + str.tostring(_pAlt) + "%    → " + f_cpNode(_altIdx), text_color = color.yellow, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 4, "COUNTER " + str.tostring(_pCounter) + "%    → " + f_cpNode(_ctrIdx), text_color = #ff8a8a, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 5, "─ FUTURE PROJECTION ─", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 6, "Future CURRENT      → " + f_cpNode(_futC1) + (_futC2ok ? "   → " + f_cpNode(_futC2) : ""), text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 7, "Future ALTERNATE  → " + f_cpNode(_futA1), text_color = #ffd28a, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 8, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 9, _narr, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
