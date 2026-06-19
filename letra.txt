@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 31", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 32", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3371,9 +3371,10 @@ if _fuN3 > 0
 showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
 fuwMinWickFrac = input.float(0.4,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.2, maxval=0.9, step=0.05)
 fuwLookback    = input.int  (3,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
-showFUStruct   = input.bool (true, "Show FU Structure Panel (cross-TF, replaces Opportunity)", group=GRP_FUOB)
-showFUConv     = input.bool (true, "Show FU Conversation Path (1A.10 — arrow to sought FU)", group=GRP_FUOB)
-showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B — arrow to active target)", group=GRP_FUOB)
+showFUConv     = input.bool (true, "Show FU Conversation Route (1A.11/1A.12 arrows)", group=GRP_FUOB)
+showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B arrow)", group=GRP_FUOB)
+fuRouteMinConf = input.int  (70,   "FU Route: min path confidence %",    group=GRP_FUOB, minval=0, maxval=100)
+fuAuthMin      = input.int  (60,   "FU Route: min node authority score", group=GRP_FUOB, minval=0, maxval=100)
 
 var float fuw_tip      = na      // wick extreme (manipulation point)
 var float fuw_bodyHigh = na
@@ -5358,15 +5359,7 @@ f_v72_px(float _v)  => na(_v) ? "–" : str.tostring(math.round_to_mintick(_v))
 f_v72_pct(float _v) => na(_v) ? "–" : str.tostring(math.round(_v)) + "%"
 f_v72_num(float _v, int _d) => na(_v) ? "–" : str.tostring(math.round(_v, _d))
 
-// FU coordinate-panel row writer (Engine 1A.8 cross-TF FU registry).
-f_fuCoordRow(table _t, int _r, string _tf, int _dir, int _valid, float _tip, float _mid, float _pool, float _score) =>
-    color _c = _valid != 1 ? color.new(color.gray, 30) : (_dir == 1 ? #5aff9e : #ff5a5a)
-    table.cell(_t, 0, _r, _tf,                                                  text_color=_c,          text_size=size.tiny)
-    table.cell(_t, 1, _r, _valid != 1 ? "—" : (_dir == 1 ? "Bull" : "Bear"),    text_color=_c,          text_size=size.tiny)
-    table.cell(_t, 2, _r, _valid != 1 ? "—" : f_v72_px(_tip),                   text_color=color.white, text_size=size.tiny)
-    table.cell(_t, 3, _r, _valid != 1 ? "—" : f_v72_px(_mid),                   text_color=color.white, text_size=size.tiny)
-    table.cell(_t, 4, _r, _valid != 1 ? "—" : f_v72_px(_pool),                  text_color=#ffd000,     text_size=size.tiny)
-    table.cell(_t, 5, _r, _valid != 1 ? "—" : str.tostring(math.round(_score)), text_color=#5ad1ff,     text_size=size.tiny)
+// (f_fuCoordRow removed in Letra 32 — FU registry panel replaced by route arrows)
 f_v72_actionCol(string _a) => _a == "Long" ? #00ff88 : _a == "Short" ? color.red : _a == "No Trade" ? color.maroon : color.gray
 f_v72_gradeCol(string _g)  => _g == "A+" ? #00ffcc : _g == "A" ? color.lime : _g == "B" ? color.yellow : _g == "C" ? color.orange : color.red
 f_v72_riskCol(string _r)   => _r == "LOW" ? color.lime : _r == "MEDIUM" ? color.yellow : color.red
@@ -6070,37 +6063,13 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosEng, 0, 3, "Flow  " + control_transfer, text_color=color.white, text_size=size.small)
         table.cell(mosEng, 0, 4, "State " + energy_state, text_color=(_rotCascade or _rotMature ? #5aff9e : #ffe05a), text_size=size.small)
 
-        // ── SECTION 6: FU STRUCTURE REGISTRY (middle right) — cross-TF FU memory ──
-        // Persistent registry: each TF's validated FU is held in f_fuPool var state
-        // and read here via request.security, so an H4/H1 FU stays visible while you
-        // sit on M1/M5. Toggle showFUStruct swaps it with the Opportunity Reactor.
-        if showFUStruct
-            var table mosFU = table.new(position.middle_right, 6, 8, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#ff2fd0, 35), frame_width=2, border_width=1)
-            table.cell(mosFU, 0, 0, "TF",   text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 1, 0, "Dir",  text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 2, 0, "Tip",  text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 3, 0, "50%",  text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 4, 0, "Pool", text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 5, 0, "Scr",  text_color=#ff7fe6, text_size=size.tiny)
-            f_fuCoordRow(mosFU, 1, "W",   nz(w_fuDir),   nz(w_fuValid),   w_fuTip,   w_fuMid,   w_fuPool,   nz(w_fuScore))
-            f_fuCoordRow(mosFU, 2, "D",   nz(d_fuDir),   nz(d_fuValid),   d_fuTip,   d_fuMid,   d_fuPool,   nz(d_fuScore))
-            f_fuCoordRow(mosFU, 3, "H4",  nz(h4_fuDir),  nz(h4_fuValid),  h4_fuTip,  h4_fuMid,  h4_fuPool,  nz(h4_fuScore))
-            f_fuCoordRow(mosFU, 4, "H1",  nz(h1_fuDir),  nz(h1_fuValid),  h1_fuTip,  h1_fuMid,  h1_fuPool,  nz(h1_fuScore))
-            f_fuCoordRow(mosFU, 5, "M15", nz(m15_fuDir), nz(m15_fuValid), m15_fuTip, m15_fuMid, m15_fuPool, nz(m15_fuScore))
-            f_fuCoordRow(mosFU, 6, "M5",  nz(m5_fuDir),  nz(m5_fuValid),  m5_fuTip,  m5_fuMid,  m5_fuPool,  nz(m5_fuScore))
-            table.cell(mosFU, 0, 7, "MAGNET", text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 1, 7, na(fu_winTarget) ? "—" : fu_winSrc, text_color=#ffd000, text_size=size.tiny)
-            table.cell(mosFU, 2, 7, na(fu_winTarget) ? "—" : f_v72_px(fu_winTarget), text_color=#ffd000, text_size=size.tiny)
-            table.cell(mosFU, 3, 7, "Align", text_color=#ff7fe6, text_size=size.tiny)
-            table.cell(mosFU, 4, 7, str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#5aff9e, text_size=size.tiny)
-            table.cell(mosFU, 5, 7, "", text_color=color.white, text_size=size.tiny)
-        else
-            var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
-            table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
-            table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
-            table.cell(mosRct, 0, 2, oppState, text_color=color.white, text_size=size.small)
-            table.cell(mosRct, 0, 3, "Quality " + tqe_grade, text_color=#5ad1ff, text_size=size.small)
-            table.cell(mosRct, 0, 4, _cmdOppClass, text_color=#9fb0d8, text_size=size.small)
+        // ── SECTION 6: OPPORTUNITY REACTOR (middle right) ──
+        var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+        table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
+        table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
+        table.cell(mosRct, 0, 2, oppState, text_color=color.white, text_size=size.small)
+        table.cell(mosRct, 0, 3, "Quality " + tqe_grade, text_color=#5ad1ff, text_size=size.small)
+        table.cell(mosRct, 0, 4, _cmdOppClass, text_color=#9fb0d8, text_size=size.small)
 
         // (Timeline now covered by the restored P3 dashboard at bottom_center)
 
@@ -6121,22 +6090,48 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
 f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ENGINE 1A.10 / 1A.9B — PATH ARROWS (toggle-driven; no panels, low token cost).
-// Conversation path: an arrow from price to the parent FU it is seeking, labelled
-// with the source TF + confidence. AFE echo: an arrow to the active flip/FU target.
-var line  conv_arrow    = na
-var label conv_arrowLbl = na
-var line  afe_arrow     = na
+// ENGINE 1A.11 / 1A.12 — FU CONVERSATION ROUTE + AFE ECHO (arrows only).
+// Draws the active route as connected arrows through the high-authority validated
+// FU nodes on the bias side (W -> D -> H4 -> H1 -> M15 -> M5), nearest-first, only
+// when path confidence clears fuRouteMinConf. Nodes below fuAuthMin are noise and
+// excluded. AFE echo arrow points to the active flip/FU target.
+var array<line> conv_route = array.new<line>()
+var label conv_routeLbl    = na
+var line  afe_arrow        = na
 if barstate.islast
-    if not na(conv_arrow)
-        line.delete(conv_arrow)
-    if not na(conv_arrowLbl)
-        label.delete(conv_arrowLbl)
+    if array.size(conv_route) > 0
+        for _li = 0 to array.size(conv_route) - 1
+            line.delete(array.get(conv_route, _li))
+        array.clear(conv_route)
+    if not na(conv_routeLbl)
+        label.delete(conv_routeLbl)
     if not na(afe_arrow)
         line.delete(afe_arrow)
-    if showFUConv and not na(conv_seekPx)
-        conv_arrow := line.new(bar_index, close, bar_index + 30, conv_seekPx, color=color.new(#b388ff, 0), width=2, style=line.style_arrow_right)
-        conv_arrowLbl := label.new(bar_index + 30, conv_seekPx, conv_seekTf + " FU  " + str.tostring(math.round(conv_confidence)) + "%", style=label.style_label_left, color=color.new(#7b2fff, 10), textcolor=color.white, size=size.small)
+    if showFUConv and conv_bias != 0 and conv_confidence >= fuRouteMinConf
+        array<float> _rt = array.new_float()
+        if nz(w_fuValid)   == 1 and not na(w_fuTip)   and nz(w_fuScore)   >= fuAuthMin and (conv_bias == 1 ? w_fuTip   > close : w_fuTip   < close)
+            array.push(_rt, w_fuTip)
+        if nz(d_fuValid)   == 1 and not na(d_fuTip)   and nz(d_fuScore)   >= fuAuthMin and (conv_bias == 1 ? d_fuTip   > close : d_fuTip   < close)
+            array.push(_rt, d_fuTip)
+        if nz(h4_fuValid)  == 1 and not na(h4_fuTip)  and nz(h4_fuScore)  >= fuAuthMin and (conv_bias == 1 ? h4_fuTip  > close : h4_fuTip  < close)
+            array.push(_rt, h4_fuTip)
+        if nz(h1_fuValid)  == 1 and not na(h1_fuTip)  and nz(h1_fuScore)  >= fuAuthMin and (conv_bias == 1 ? h1_fuTip  > close : h1_fuTip  < close)
+            array.push(_rt, h1_fuTip)
+        if nz(m15_fuValid) == 1 and not na(m15_fuTip) and nz(m15_fuScore) >= fuAuthMin and (conv_bias == 1 ? m15_fuTip > close : m15_fuTip < close)
+            array.push(_rt, m15_fuTip)
+        if nz(m5_fuValid)  == 1 and not na(m5_fuTip)  and nz(m5_fuScore)  >= fuAuthMin and (conv_bias == 1 ? m5_fuTip  > close : m5_fuTip  < close)
+            array.push(_rt, m5_fuTip)
+        if array.size(_rt) > 0
+            array.sort(_rt, conv_bias == 1 ? order.ascending : order.descending)
+            int   _rx = bar_index
+            float _ry = close
+            for _ri = 0 to array.size(_rt) - 1
+                float _rn  = array.get(_rt, _ri)
+                int   _rx2 = _rx + 9
+                array.push(conv_route, line.new(_rx, _ry, _rx2, _rn, color=color.new(#b388ff, 0), width=2, style=line.style_arrow_right))
+                _rx := _rx2
+                _ry := _rn
+            conv_routeLbl := label.new(_rx, _ry, conv_seekTf + " FU  " + str.tostring(math.round(conv_confidence)) + "%", style=label.style_label_left, color=color.new(#7b2fff, 10), textcolor=color.white, size=size.small)
     if showAFE and not na(afe_activeDest)
         afe_arrow := line.new(bar_index, close, bar_index + 18, afe_activeDest, color=color.new(#c9a0ff, 10), width=2, style=line.style_arrow_right)
 
