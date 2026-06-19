@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 20", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 21", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -2959,34 +2959,14 @@ if longSignal or shortSignal
 // renders the single active narrative instead of stacking these.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Track IE1A canonical phase changes (sole lifecycle authority).
-// hypothesisChanged: true when ENGINE 1A transitions to a new canonical phase.
-var string prevHypothesis = "Point 4 Origin"
-bool hypothesisChanged = ie1a_currentPhase != prevHypothesis
-prevHypothesis := ie1a_currentPhase
-
-// In Execution mode these are suppressed entirely (Narrative Engine handles it).
-// In Context/Research mode we show them compressed.
-bool _die_showHypLabel = displayMode == "Research" or
-     (displayMode == "Context" and hypothesisChanged and direction != 0)
-
-if _die_showHypLabel
-    color phLabelCol =
-         ie1a_currentPhase == "Expansion"                  ? color.lime    :
-         ie1a_currentPhase == "Expansion Pre-Convexity" or ie1a_currentPhase == "Expansion Induction" or ie1a_currentPhase == "Expansion Liquidity" ? #c084fc :
-         ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low"    ? #00ff88       :
-         ie1a_currentPhase == "Absorption"                ? color.aqua    :
-         ie1a_currentPhase == "Retracement" or ie1a_currentPhase == "Retracement Pre-Convexity" or ie1a_currentPhase == "Retracement Induction" or ie1a_currentPhase == "Retracement Liquidity" ? color.silver :
-         color.orange
-
-    bool isUp = direction == 1
-    label.new(bar_index,
-         isUp ? low - atr * 0.3 : high + atr * 0.3,
-         l0_currentPhase + " " + str.tostring(math.round(primaryHypothesisConf)) + "%",
-         style      = isUp ? label.style_label_up : label.style_label_down,
-         textcolor  = color.black,
-         color      = color.new(phLabelCol, 25),
-         size       = size.tiny)
+// NOTE (v21): the legacy "hypothesis label" block was REMOVED. It was a SECOND
+// on-chart phase-label authority that (a) only rendered in Context/Research mode,
+// (b) spawned a fresh event label on every canonical-phase change (flood), and
+// (c) coloured Expansion Pre-Convexity, Expansion Induction AND Expansion
+// Liquidity the SAME purple (#c084fc) while labelling them with l0_currentPhase
+// — so two different phases showed as near-identical purple "...Liquidity"
+// labels. The single live region label (die_regionLbl, Engine-1A authority) is
+// now the sole on-chart phase display and renders in every display mode.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 23 — INDUCEMENT ZONE BANDS
