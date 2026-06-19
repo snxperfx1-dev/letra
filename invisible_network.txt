@@ -19,8 +19,10 @@ float  wickFrac     = input.float(0.4, "FU spike: min wick / range",        grou
 int    lookback     = input.int  (3,   "FU spike: structure lookback",      group = GRP, minval = 2, maxval = 30)
 int    authMin      = input.int  (45,  "Min node authority to show",        group = GRP, minval = 0, maxval = 120)
 int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
-int    nodeMax      = input.int  (64,  "Max remembered nodes",              group = GRP, minval = 10, maxval = 200)
+int    nodeMax      = input.int  (250, "Max remembered nodes",              group = GRP, minval = 10, maxval = 500)
 bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
+bool   showConsumed = input.bool (true,  "Show CONSUMED / historical nodes (faint)", group = GRP)
+bool   showConversations = input.bool (true, "Show CONVERSATIONS (dashed web)", group = GRP, tooltip = "Physically draws the node-to-node money-flow conversations as light dashed edges in the right margin: how upper/lower FUs and flip zones talk to each other.")
 bool   showFlips    = input.bool (true,  "Show FLIP zones (Web 1.1)",       group = GRP)
 bool   tfColors     = input.bool (true,  "Color nodes by timeframe (Engine 2.8)", group = GRP)
 bool   showFEZ      = input.bool (true,  "Show FEZ corridor (Engine 2.5)",  group = GRP)
@@ -92,6 +94,13 @@ f_fuPool(simple float _wf, simple int _lb) =>
 [m3Tip,  m3Mid,  m3Dir,  m3V,  m3Sc]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [m1Tip,  m1Mid,  m1Dir,  m1V,  m1Sc]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 
+// ── Native chart-resolution scan. Runs f_fuPool directly on the chart's own
+//    candles every bar, so EVERY historical FU on the viewed timeframe becomes
+//    a node — dense history on any chart TF (not just standard ones). The chart
+//    TF itself is served by this; the fixed scans below only add STRICTLY-higher
+//    context (see _ok* flags, which now require the TF to be above the chart). ─
+[cTip, cMid, cDir, cV, cSc] = f_fuPool(wickFrac, lookback)
+
 // ── Bias: the highest-timeframe live validated FU sets the directional context;
 //    fall back to a 50-EMA slope when no FU is active. ─────────────────────────
 float _ema = ta.ema(close, 50)
@@ -141,19 +150,19 @@ f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
         array.shift(nRev)
 
 // Remember a NEW validated FU per timeframe (tip change = a freshly born node).
-// A TF below the chart is clamped (duplicate of the chart TF) → skip its push,
-// so the network populates from the chart TF upward (Pine cannot pull lower-TF
-// structures onto a higher chart — request.security_lower_tf errors for that).
+// The chart TF is served by the NATIVE scan below; the fixed scans only add
+// timeframes STRICTLY ABOVE the chart (so no duplicate of the native chart node).
 int  _chartSec = timeframe.in_seconds()
-bool _okMN  = timeframe.in_seconds("M")   >= _chartSec
-bool _okW   = timeframe.in_seconds("W")   >= _chartSec
-bool _okD   = timeframe.in_seconds("D")   >= _chartSec
-bool _okH4  = timeframe.in_seconds("240") >= _chartSec
-bool _okH1  = timeframe.in_seconds("60")  >= _chartSec
-bool _okM15 = timeframe.in_seconds("15")  >= _chartSec
-bool _okM5  = timeframe.in_seconds("5")   >= _chartSec
-bool _okM3  = timeframe.in_seconds("3")   >= _chartSec
-bool _okM1  = timeframe.in_seconds("1")   >= _chartSec
+int  _chartWt  = _chartSec >= timeframe.in_seconds("M") ? 9 : _chartSec >= timeframe.in_seconds("W") ? 8 : _chartSec >= timeframe.in_seconds("D") ? 7 : _chartSec >= 14400 ? 6 : _chartSec >= 3600 ? 5 : _chartSec >= 900 ? 4 : _chartSec >= 300 ? 3 : _chartSec >= 180 ? 2 : 1
+bool _okMN  = timeframe.in_seconds("M")   > _chartSec
+bool _okW   = timeframe.in_seconds("W")   > _chartSec
+bool _okD   = timeframe.in_seconds("D")   > _chartSec
+bool _okH4  = timeframe.in_seconds("240") > _chartSec
+bool _okH1  = timeframe.in_seconds("60")  > _chartSec
+bool _okM15 = timeframe.in_seconds("15")  > _chartSec
+bool _okM5  = timeframe.in_seconds("5")   > _chartSec
+bool _okM3  = timeframe.in_seconds("3")   > _chartSec
+bool _okM1  = timeframe.in_seconds("1")   > _chartSec
 var float _pvW   = na
 var float _pvD   = na
 var float _pvH4  = na
@@ -163,6 +172,11 @@ var float _pvM5  = na
 var float _pvM3  = na
 var float _pvM1  = na
 var float _pvMN  = na
+var float _pvChart = na
+// Native chart-TF node — dense per-bar historical detection on the viewed TF.
+if cV == 1 and not na(cTip) and (na(_pvChart) or cTip != _pvChart)
+    f_nodeAdd(cTip, cMid, nz(cDir), nz(cSc), _chartWt)
+    _pvChart := cTip
 if _okMN and nz(mnV)  == 1 and not na(mnTip)  and (na(_pvMN)  or mnTip  != _pvMN)
     f_nodeAdd(mnTip,  mnMid,  nz(mnDir),  nz(mnSc),  9)
     _pvMN := mnTip
@@ -247,6 +261,7 @@ f_pathNodes(bool _aheadSide) =>
 
 // ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
 var array<line>  route_lines = array.new<line>()
+var array<line>  conv_lines  = array.new<line>()
 var array<line>  level_lines = array.new<line>()
 var array<label> level_lbls  = array.new<label>()
 var array<box>   flip_boxes  = array.new<box>()
@@ -265,6 +280,10 @@ if barstate.islast and webMode
         for _i = 0 to array.size(route_lines) - 1
             line.delete(array.get(route_lines, _i))
         array.clear(route_lines)
+    if array.size(conv_lines) > 0
+        for _i = 0 to array.size(conv_lines) - 1
+            line.delete(array.get(conv_lines, _i))
+        array.clear(conv_lines)
     if array.size(level_lines) > 0
         for _i = 0 to array.size(level_lines) - 1
             line.delete(array.get(level_lines, _i))
@@ -313,6 +332,11 @@ if barstate.islast and webMode
             else
                 _openMem += 1
             float _a  = f_auth(_i)
+            // CONSUMED / historical nodes — faint dotted memory (Web 2.0), shown
+            // so most of the historical network stays visible on the chart.
+            if showConsumed and showLevels and _st == 2 and _a >= authMin
+                float _npc = array.get(nPx, _i)
+                array.push(level_lines, line.new(bar_index - 1, _npc, bar_index + 6, _npc, color = color.new(color.gray, 82), width = 1, style = line.style_dotted))
             if _st != 2 and _a >= authMin
                 float _np = array.get(nPx, _i)
                 int   _nd = array.get(nDir, _i)
@@ -422,6 +446,61 @@ if barstate.islast and webMode
                 _x := _x2
                 _y := _n
             prev_lbl := label.new(_x, _y, "TRAIL  ←  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_right, color = color.new(#0d5b66, 5), textcolor = #aef3fb, size = size.small)
+
+    // ── CONVERSATIONS (Web 1.2) — physically draw the node-to-node money-flow
+    //    conversations as light dashed edges in the right margin. The strongest
+    //    nodes are sorted by price and chained, so you SEE how upper/lower FUs
+    //    and their flip zones talk to each other (the canonical FEZ ladder).
+    //    Kept faint + off the candles so it never clutters the price action. ──
+    if showConversations and array.size(nPx) > 0
+        array<int> _cv = array.new_int()
+        for _i = 0 to array.size(nPx) - 1
+            if (showConsumed or array.get(nState, _i) != 2) and f_auth(_i) >= authMin
+                array.push(_cv, _i)
+        // keep the strongest ~28 nodes to stay clean
+        if array.size(_cv) > 28
+            for _a = 1 to array.size(_cv) - 1
+                int   _key = array.get(_cv, _a)
+                float _ka  = f_auth(_key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if f_auth(array.get(_cv, _b)) < _ka
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+            while array.size(_cv) > 28
+                array.pop(_cv)
+        // sort the kept nodes by price ascending → the vertical ladder order
+        if array.size(_cv) > 1
+            for _a = 1 to array.size(_cv) - 1
+                int   _key = array.get(_cv, _a)
+                float _kp  = array.get(nPx, _key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if array.get(nPx, array.get(_cv, _b)) > _kp
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+        // chain consecutive nodes with faint dashed arrows in the right margin
+        if array.size(_cv) > 1
+            int _cx = bar_index + 2
+            for _i = 1 to array.size(_cv) - 1
+                int   _iA  = array.get(_cv, _i - 1)
+                int   _iB  = array.get(_cv, _i)
+                float _pA  = array.get(nPx, _iA)
+                float _pB  = array.get(nPx, _iB)
+                int   _wtB = array.get(nWt, _iB)
+                color _ec  = tfColors ? color.new(f_tfColor(_wtB), 68) : color.new(#b388ff, 68)
+                array.push(conv_lines, line.new(_cx, _pA, _cx + 3, _pB, color = _ec, width = 1, style = line.style_dashed))
+                _cx := _cx + 3
 
     // ── Network panel (Engine 2.13) ─────────────────────────────────────────
     if showPanel
