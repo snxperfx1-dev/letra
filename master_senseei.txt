@@ -1,0 +1,106 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// MASTER SENSEEI — the fusion / decision layer.
+// It detects NOTHING itself. It LISTENS to two engines already on your chart —
+//   • Letra            (Engine 1A: phase / direction / HTF stack)
+//   • Invisible Network (FU conversation graph: bias / node richness)
+// — and renders ONE unified verdict: are the engines agreeing or conflicting,
+// what is the master directive, and at what confidence.
+//
+// ── HOW TO CONNECT (one-time) ─────────────────────────────────────────────────
+//  1. Put Letra, Invisible Network AND Master Senseei on the SAME chart.
+//  2. Open Master Senseei → Settings → Connections. For each source dropdown,
+//     pick the matching published plot from the other indicator:
+//        "Letra → Direction"        = Letra:  "Letra Dir"
+//        "Letra → Stack Direction"  = Letra:  "Letra Stack Dir"
+//        "Letra → Stack Strength %" = Letra:  "Letra Stack %"
+//        "Network → Bias"           = Invisible Network: "IN Bias"
+//        "Network → Node count"     = Invisible Network: "IN Nodes"
+//  Any source left on its default (close) is auto-detected as "not linked" and
+//  the panel will say so until you wire it.
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("Master Senseei", overlay = true, max_labels_count = 50)
+
+// ── Connections ──────────────────────────────────────────────────────────────
+string GC = "Connections (link to Letra & Invisible Network)"
+float srcLetraDir  = input.source(close, "Letra → Direction (-1/0/1)",   group = GC)
+float srcLetraSDir = input.source(close, "Letra → Stack Direction",      group = GC)
+float srcLetraSPct = input.source(close, "Letra → Stack Strength %",     group = GC)
+float srcNetBias   = input.source(close, "Network → Bias (-1/0/1)",      group = GC)
+float srcNetNodes  = input.source(close, "Network → Node count",         group = GC)
+
+// ── Settings ─────────────────────────────────────────────────────────────────
+string GS = "Senseei"
+bool   showPanel   = input.bool(true, "Show Master panel",                group = GS)
+bool   showVerdict = input.bool(true, "Show verdict label on chart",      group = GS)
+int    minConf     = input.int (55,   "Min confidence to call a trade",   group = GS, minval = 0, maxval = 100)
+string panelPos    = input.string("Top Left", "Panel position", options = ["Top Left", "Middle Left", "Bottom Left"], group = GS)
+
+// ── Link detection — an unlinked input.source keeps its default (the close
+//    series), so a source that differs from close has been wired to a real plot.
+bool letraOn = srcLetraDir != close or srcLetraSDir != close or srcLetraSPct != close
+bool netOn   = srcNetBias  != close or srcNetNodes != close
+bool anyLinked  = letraOn or netOn
+bool bothLinked = letraOn and netOn
+
+f_sgn(float _x) => _x > 0.3 ? 1 : _x < -0.3 ? -1 : 0
+f_dirTxt(int _d) => _d == 1 ? "▲ BULL" : _d == -1 ? "▼ BEAR" : "○ —"
+
+// ── Votes ────────────────────────────────────────────────────────────────────
+// Letra votes with its execution direction, falling back to its HTF stack dir.
+int letraVote = letraOn ? (f_sgn(srcLetraDir) != 0 ? f_sgn(srcLetraDir) : f_sgn(srcLetraSDir)) : 0
+int netVote   = netOn   ? f_sgn(srcNetBias) : 0
+
+// Self context (50-EMA slope) — only used if NEITHER engine is linked yet, so
+// Senseei still reads sanely while you wire it up.
+float _ema    = ta.ema(close, 50)
+int   ownVote = close > _ema ? 1 : close < _ema ? -1 : 0
+
+int   _sum   = letraVote + netVote + (anyLinked ? 0 : ownVote)
+int   master = _sum > 0 ? 1 : _sum < 0 ? -1 : 0
+
+bool aligned  = bothLinked and letraVote != 0 and letraVote == netVote
+bool conflict = bothLinked and letraVote != 0 and netVote != 0 and letraVote != netVote
+
+// ── Confidence — engine agreement (≤50) + Letra stack strength (≤30) + network
+//    richness (≤20). Degrades gracefully when an input is missing. ─────────────
+float stkPct = (letraOn and srcLetraSPct != close and srcLetraSPct >= 0 and srcLetraSPct <= 100) ? srcLetraSPct : 50.0
+float nodes  = (netOn   and srcNetNodes  != close and srcNetNodes  >= 0 and srcNetNodes  <= 500) ? srcNetNodes  : 0.0
+float agreeC = bothLinked ? (aligned ? 50.0 : conflict ? 10.0 : 30.0) : (anyLinked ? 30.0 : 15.0)
+float conf   = math.min(100.0, agreeC + stkPct * 0.30 + math.min(20.0, nodes / 3.0))
+
+string verdict = master == 0 ? "WAIT" : conflict ? "CONFLICT" : conf < minConf ? "BUILDING" : (master == 1 ? "LONG" : "SHORT")
+color  vCol    = verdict == "LONG" ? #00e676 : verdict == "SHORT" ? #ff5252 : verdict == "CONFLICT" ? #ff9800 : color.gray
+
+// ── Verdict label (right of price, off the candles) ──────────────────────────
+var label vLbl = na
+if showVerdict and barstate.islast
+    if not na(vLbl)
+        label.delete(vLbl)
+    string _vtxt = "SENSEEI  " + verdict + ((master != 0 and verdict != "CONFLICT" and verdict != "WAIT") ? "  " + str.tostring(math.round(conf)) + "%" : "")
+    vLbl := label.new(bar_index + 3, close, _vtxt, style = label.style_label_left, color = color.new(vCol, 8), textcolor = color.white, size = size.large)
+
+// ── Master panel ─────────────────────────────────────────────────────────────
+var table mp = na
+if showPanel and barstate.islast
+    if na(mp)
+        mp := table.new(panelPos == "Top Left" ? position.top_left : panelPos == "Bottom Left" ? position.bottom_left : position.middle_left, 2, 7, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
+    table.cell(mp, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
+    table.cell(mp, 1, 0, f_dirTxt(master), text_color = vCol, text_size = size.large)
+    table.cell(mp, 0, 1, "Letra", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 1, letraOn ? (f_dirTxt(letraVote) + "  " + str.tostring(math.round(stkPct)) + "%") : "○ link source", text_color = letraOn ? color.white : color.gray, text_size = size.normal)
+    table.cell(mp, 0, 2, "Invisible Network", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 2, netOn ? (f_dirTxt(netVote) + "  " + str.tostring(math.round(nodes)) + " nodes") : "○ link source", text_color = netOn ? color.white : color.gray, text_size = size.normal)
+    table.cell(mp, 0, 3, "Consensus", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 3, bothLinked ? (aligned ? "ALIGNED" : conflict ? "CONFLICT" : "MIXED") : "partial", text_color = aligned ? #00e676 : conflict ? #ff5252 : color.yellow, text_size = size.normal)
+    table.cell(mp, 0, 4, "Confidence", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 4, str.tostring(math.round(conf)) + "%", text_color = conf >= minConf ? #00e676 : color.yellow, text_size = size.normal)
+    table.cell(mp, 0, 5, "VERDICT", text_color = #ffd000, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 5, verdict, text_color = vCol, text_size = size.large)
+    table.cell(mp, 0, 6, anyLinked ? "live" : "→ link sources in Settings", text_color = color.gray, text_size = size.small, text_halign = text.align_left)
+    table.cell(mp, 1, 6, "", text_size = size.small)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(master ==  1 and not conflict and conf >= 55, "Senseei LONG",  "Master Senseei: LONG — engines aligned")
+alertcondition(master == -1 and not conflict and conf >= 55, "Senseei SHORT", "Master Senseei: SHORT — engines aligned")
+alertcondition(conflict, "Senseei CONFLICT", "Master Senseei: engines in conflict — stand aside")

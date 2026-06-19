@@ -728,3 +728,13 @@ if barstate.islast and webMode
         table.cell(coPilot, 0, 7, "Future ALTERNATE  → " + _futAStr, text_color = #ffd28a, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 8, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.small, text_halign = text.align_left)
         table.cell(coPilot, 0, 9, _narr, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS — published so "Master Senseei" can read this engine via input.source.
+//   IN Bias  : -1 / 0 / 1 network directional bias
+//   IN Nodes : live size of the node registry (network richness)
+// display.data_window keeps them OFF the chart but selectable as external sources.
+// ═══════════════════════════════════════════════════════════════════════════════
+plot(netBias,         "IN Bias",  color = color.new(color.aqua, 100), display = display.data_window)
+plot(array.size(nPx), "IN Nodes", color = color.new(color.aqua, 100), display = display.data_window)

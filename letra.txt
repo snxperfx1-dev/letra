@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 37", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 38", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -6206,3 +6206,16 @@ bool stackFullyAligned = fractalStackScore >= 100.0 and fractalStackScore[1] < 1
 alertcondition(stackFlippedBull,  title="Fractal Stack flip BULL", message="Fractal stack flipped bullish")
 alertcondition(stackFlippedBear,  title="Fractal Stack flip BEAR", message="Fractal stack flipped bearish")
 alertcondition(stackFullyAligned, title="All Layers Aligned",      message="All fixed layers aligned (100% stack)")
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS — published for "Master Senseei" (read via input.source on that script).
+//   Letra Dir       : Engine 1A execution direction (-1 / 0 / 1)
+//   Letra Stack Dir : fractal HTF stack alignment direction (-1 / 0 / 1)
+//   Letra Stack %   : fractal stack alignment strength (0-100)
+// display.data_window keeps them OFF the chart but selectable as external sources.
+// ═══════════════════════════════════════════════════════════════════════════════
+plot(direction,         "Letra Dir",       color=color.new(color.white, 100), display=display.data_window)
+plot(fractalStackDir,   "Letra Stack Dir", color=color.new(color.white, 100), display=display.data_window)
+plot(fractalStackScore, "Letra Stack %",   color=color.new(color.white, 100), display=display.data_window)
