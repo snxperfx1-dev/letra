@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 38", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 39", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -6219,3 +6219,14 @@ alertcondition(stackFullyAligned, title="All Layers Aligned",      message="All 
 plot(direction,         "Letra Dir",       color=color.new(color.white, 100), display=display.data_window)
 plot(fractalStackDir,   "Letra Stack Dir", color=color.new(color.white, 100), display=display.data_window)
 plot(fractalStackScore, "Letra Stack %",   color=color.new(color.white, 100), display=display.data_window)
+
+
+// ── V2 EXPORTS — Energy / Resolution / Attractor buses for Master Senseei ─────
+//   Letra Resolution : 0 UNRESOLVED · 1 PARTIALLY RESOLVED · 2 RESOLVED
+//   Letra Residual   : residual (uncleaned) energy score 0-100
+//   Letra Attractor  : primary attractor strength 0-100
+//   Letra Completion : recursive completion score 0-100 (timing)
+plot(re_resolutionState == "RESOLVED" ? 2 : re_resolutionState == "PARTIALLY RESOLVED" ? 1 : 0, "Letra Resolution", color=color.new(color.white, 100), display=display.data_window)
+plot(re_residualEnergyScore,      "Letra Residual",   color=color.new(color.white, 100), display=display.data_window)
+plot(eae_primaryAttractorScore,   "Letra Attractor",  color=color.new(color.white, 100), display=display.data_window)
+plot(re_recursiveCompletionScore, "Letra Completion", color=color.new(color.white, 100), display=display.data_window)
