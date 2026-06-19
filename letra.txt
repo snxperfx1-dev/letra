@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 30", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 31", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3369,8 +3369,8 @@ if _fuN3 > 0
 // contained, chart-timeframe, single live objects (no per-bar trail). Renders
 // FU / FU MID / MAGNET / INDUCTION BAND and exposes fuw_* for downstream engines.
 showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
-fuwMinWickFrac = input.float(0.5,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.3, maxval=0.9, step=0.05)
-fuwLookback    = input.int  (5,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
+fuwMinWickFrac = input.float(0.4,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.2, maxval=0.9, step=0.05)
+fuwLookback    = input.int  (3,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
 showFUStruct   = input.bool (true, "Show FU Structure Panel (cross-TF, replaces Opportunity)", group=GRP_FUOB)
 showFUConv     = input.bool (true, "Show FU Conversation Path (1A.10 — arrow to sought FU)", group=GRP_FUOB)
 showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B — arrow to active target)", group=GRP_FUOB)
@@ -3493,8 +3493,8 @@ f_fuPool(simple float _wickFrac) =>
     var bool  _valid = false
     var int   _fbar  = na
     float _rng  = math.max(high - low, 1e-10)
-    float _priorHi = ta.highest(high, 5)[1]
-    float _priorLo = ta.lowest(low,  5)[1]
+    float _priorHi = ta.highest(high, 3)[1]
+    float _priorLo = ta.lowest(low,  3)[1]
     bool  _bear = not na(_priorHi) and high > _priorHi and close < _priorHi and (high - math.max(open, close)) / _rng >= _wickFrac
     bool  _bull = not na(_priorLo) and low  < _priorLo and close > _priorLo and (math.min(open, close) - low) / _rng >= _wickFrac
     if _bear
@@ -3538,12 +3538,12 @@ f_fuPool(simple float _wickFrac) =>
 [h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid,  h1_fuTip,  h1_fuScore]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
 [m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid, m15_fuTip, m15_fuScore] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
 [m5_fuPool,  m5_fuMid,  m5_fuBandHi,  m5_fuBandLo,  m5_fuDir,  m5_fuValid,  m5_fuTip,  m5_fuScore]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[m3_fuPool,  m3_fuMid,  m3_fuBandHi,  m3_fuBandLo,  m3_fuDir,  m3_fuValid,  m3_fuTip,  m3_fuScore]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[m1_fuPool,  m1_fuMid,  m1_fuBandHi,  m1_fuBandLo,  m1_fuDir,  m1_fuValid,  m1_fuTip,  m1_fuScore]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[d_fuPool,   d_fuMid,   d_fuBandHi,   d_fuBandLo,   d_fuDir,   d_fuValid,   d_fuTip,   d_fuScore]   = request.security(syminfo.tickerid, f_safeTF("D"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[w_fuPool,   w_fuMid,   w_fuBandHi,   w_fuBandLo,   w_fuDir,   w_fuValid,   w_fuTip,   w_fuScore]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
 
 // Recursive alignment % (how many of the six layers carry a live validated FU)
 // and the winning future-magnet target = the HIGHEST timeframe with a valid FU.
-int   _fuActiveCnt   = (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (nz(m5_fuValid) == 1 ? 1 : 0) + (nz(m3_fuValid) == 1 ? 1 : 0) + (nz(m1_fuValid) == 1 ? 1 : 0)
+int   _fuActiveCnt   = (nz(w_fuValid) == 1 ? 1 : 0) + (nz(d_fuValid) == 1 ? 1 : 0) + (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (nz(m5_fuValid) == 1 ? 1 : 0)
 float fu_recursiveAlign = _fuActiveCnt / 6.0 * 100.0
 float  fu_winTarget = na
 string fu_winSrc    = "-"
@@ -3625,7 +3625,15 @@ float  conv_seekPx = na
 string conv_seekTf = "—"
 float  conv_seekSc = 0.0
 if conv_bias != 0
-    if nz(h4_fuValid) == 1 and not na(h4_fuTip) and (conv_bias == 1 ? h4_fuTip > close : h4_fuTip < close)
+    if nz(w_fuValid) == 1 and not na(w_fuTip) and (conv_bias == 1 ? w_fuTip > close : w_fuTip < close)
+        conv_seekPx := w_fuTip
+        conv_seekTf := "W"
+        conv_seekSc := nz(w_fuScore)
+    else if nz(d_fuValid) == 1 and not na(d_fuTip) and (conv_bias == 1 ? d_fuTip > close : d_fuTip < close)
+        conv_seekPx := d_fuTip
+        conv_seekTf := "D"
+        conv_seekSc := nz(d_fuScore)
+    else if nz(h4_fuValid) == 1 and not na(h4_fuTip) and (conv_bias == 1 ? h4_fuTip > close : h4_fuTip < close)
         conv_seekPx := h4_fuTip
         conv_seekTf := "H4"
         conv_seekSc := nz(h4_fuScore)
@@ -3641,14 +3649,6 @@ if conv_bias != 0
         conv_seekPx := m5_fuTip
         conv_seekTf := "M5"
         conv_seekSc := nz(m5_fuScore)
-    else if nz(m3_fuValid) == 1 and not na(m3_fuTip) and (conv_bias == 1 ? m3_fuTip > close : m3_fuTip < close)
-        conv_seekPx := m3_fuTip
-        conv_seekTf := "M3"
-        conv_seekSc := nz(m3_fuScore)
-    else if nz(m1_fuValid) == 1 and not na(m1_fuTip) and (conv_bias == 1 ? m1_fuTip > close : m1_fuTip < close)
-        conv_seekPx := m1_fuTip
-        conv_seekTf := "M1"
-        conv_seekSc := nz(m1_fuScore)
 float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, fu_recursiveAlign * 0.5 + conv_seekSc * 0.5)
 
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
@@ -6082,12 +6082,12 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
             table.cell(mosFU, 3, 0, "50%",  text_color=#ff7fe6, text_size=size.tiny)
             table.cell(mosFU, 4, 0, "Pool", text_color=#ff7fe6, text_size=size.tiny)
             table.cell(mosFU, 5, 0, "Scr",  text_color=#ff7fe6, text_size=size.tiny)
-            f_fuCoordRow(mosFU, 1, "H4",  nz(h4_fuDir),  nz(h4_fuValid),  h4_fuTip,  h4_fuMid,  h4_fuPool,  nz(h4_fuScore))
-            f_fuCoordRow(mosFU, 2, "H1",  nz(h1_fuDir),  nz(h1_fuValid),  h1_fuTip,  h1_fuMid,  h1_fuPool,  nz(h1_fuScore))
-            f_fuCoordRow(mosFU, 3, "M15", nz(m15_fuDir), nz(m15_fuValid), m15_fuTip, m15_fuMid, m15_fuPool, nz(m15_fuScore))
-            f_fuCoordRow(mosFU, 4, "M5",  nz(m5_fuDir),  nz(m5_fuValid),  m5_fuTip,  m5_fuMid,  m5_fuPool,  nz(m5_fuScore))
-            f_fuCoordRow(mosFU, 5, "M3",  nz(m3_fuDir),  nz(m3_fuValid),  m3_fuTip,  m3_fuMid,  m3_fuPool,  nz(m3_fuScore))
-            f_fuCoordRow(mosFU, 6, "M1",  nz(m1_fuDir),  nz(m1_fuValid),  m1_fuTip,  m1_fuMid,  m1_fuPool,  nz(m1_fuScore))
+            f_fuCoordRow(mosFU, 1, "W",   nz(w_fuDir),   nz(w_fuValid),   w_fuTip,   w_fuMid,   w_fuPool,   nz(w_fuScore))
+            f_fuCoordRow(mosFU, 2, "D",   nz(d_fuDir),   nz(d_fuValid),   d_fuTip,   d_fuMid,   d_fuPool,   nz(d_fuScore))
+            f_fuCoordRow(mosFU, 3, "H4",  nz(h4_fuDir),  nz(h4_fuValid),  h4_fuTip,  h4_fuMid,  h4_fuPool,  nz(h4_fuScore))
+            f_fuCoordRow(mosFU, 4, "H1",  nz(h1_fuDir),  nz(h1_fuValid),  h1_fuTip,  h1_fuMid,  h1_fuPool,  nz(h1_fuScore))
+            f_fuCoordRow(mosFU, 5, "M15", nz(m15_fuDir), nz(m15_fuValid), m15_fuTip, m15_fuMid, m15_fuPool, nz(m15_fuScore))
+            f_fuCoordRow(mosFU, 6, "M5",  nz(m5_fuDir),  nz(m5_fuValid),  m5_fuTip,  m5_fuMid,  m5_fuPool,  nz(m5_fuScore))
             table.cell(mosFU, 0, 7, "MAGNET", text_color=#ff7fe6, text_size=size.tiny)
             table.cell(mosFU, 1, 7, na(fu_winTarget) ? "—" : fu_winSrc, text_color=#ffd000, text_size=size.tiny)
             table.cell(mosFU, 2, 7, na(fu_winTarget) ? "—" : f_v72_px(fu_winTarget), text_color=#ffd000, text_size=size.tiny)
