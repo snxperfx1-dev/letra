@@ -1,0 +1,294 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// INVISIBLE NETWORK  (Engine 0 / 1A.13)  —  standalone FU conversation graph
+// ───────────────────────────────────────────────────────────────────────────────
+// Price is not moving between swings or BOS — it moves between remembered
+// manipulations (validated FU candles). This indicator scans every timeframe
+// (M1 → Weekly), remembers each validated FU as a persistent network NODE
+// (ACTIVE → DORMANT → CONSUMED → HISTORICAL, with revisit counting), ranks them by
+// authority, and reconstructs the live CONVERSATION between them — drawing the
+// strongest active route as connected arrows plus the remembered network levels,
+// and listing the active conversations in a panel.
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("Invisible Network", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+string GRP = "Invisible Network"
+float  wickFrac     = input.float(0.4, "FU spike: min wick / range",        group = GRP, minval = 0.2, maxval = 0.9, step = 0.05)
+int    lookback     = input.int  (3,   "FU spike: structure lookback",      group = GRP, minval = 2, maxval = 30)
+int    authMin      = input.int  (45,  "Min node authority to show",        group = GRP, minval = 0, maxval = 120)
+int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
+int    nodeMax      = input.int  (64,  "Max remembered nodes",              group = GRP, minval = 10, maxval = 200)
+bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
+bool   showRoute    = input.bool (true,  "Show conversation route (arrows)",group = GRP)
+bool   showPanel    = input.bool (true,  "Show conversation panel",         group = GRP)
+int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
+int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
+
+// ── HTF memory guard: never request a timeframe lower than the chart when the
+//    chart is above H1 (prevents intrabar memory blow-ups on Daily/Weekly). ──
+bool _htfGuard = timeframe.in_seconds() > 3600
+f_safeTF(simple string _tf) => _htfGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+// ── FU pool detector (runs per requested timeframe) ──────────────────────────
+// Validated FU = a spike through local structure (prior `_lb`-bar high/low) that
+// closes back inside ("the middle finger") and is later VALIDATED when price
+// destroys the candle's opposite extreme. Returns tip, midpoint, direction,
+// validity and an authority sub-score.
+f_fuPool(simple float _wf, simple int _lb) =>
+    var float _tip   = na
+    var float _bH    = na
+    var float _bL    = na
+    var int   _dir   = 0
+    var bool  _valid = false
+    var int   _fbar  = na
+    float _rng = math.max(high - low, 1e-10)
+    float _pHi = ta.highest(high, _lb)[1]
+    float _pLo = ta.lowest(low,  _lb)[1]
+    bool  _bear = not na(_pHi) and high > _pHi and close < _pHi and (high - math.max(open, close)) / _rng >= _wf
+    bool  _bull = not na(_pLo) and low  < _pLo and close > _pLo and (math.min(open, close) - low) / _rng >= _wf
+    if _bear
+        _dir := -1
+        _tip := high
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _fbar := bar_index
+        _valid := false
+    else if _bull
+        _dir := 1
+        _tip := low
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _fbar := bar_index
+        _valid := false
+    if not _valid and _dir == -1 and not na(_bL) and bar_index > nz(_fbar) and close < _bL
+        _valid := true
+    if not _valid and _dir ==  1 and not na(_bH) and bar_index > nz(_fbar) and close > _bH
+        _valid := true
+    float _mid = na
+    if _dir == -1 and not na(_tip)
+        _mid := _bH + (_tip - _bH) * 0.5
+    else if _dir == 1 and not na(_tip)
+        _mid := _tip + (_bL - _tip) * 0.5
+    float _wk = (_dir == -1 and not na(_tip)) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and not na(_tip)) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    float _score = (_valid ? 30.0 : 0.0) + math.min(25.0, _wk * 15.0) + 20.0 + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
+    [_valid ? _tip : na, _mid, _dir, _valid ? 1 : 0, _score]
+
+// ── Scan all eight timeframes ────────────────────────────────────────────────
+[wTip,   wMid,   wDir,   wV,   wSc]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[dTip,   dMid,   dDir,   dV,   dSc]   = request.security(syminfo.tickerid, f_safeTF("D"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h4Tip,  h4Mid,  h4Dir,  h4V,  h4Sc]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h1Tip,  h1Mid,  h1Dir,  h1V,  h1Sc]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m15Tip, m15Mid, m15Dir, m15V, m15Sc] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m5Tip,  m5Mid,  m5Dir,  m5V,  m5Sc]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m3Tip,  m3Mid,  m3Dir,  m3V,  m3Sc]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m1Tip,  m1Mid,  m1Dir,  m1V,  m1Sc]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+
+// ── Bias: the highest-timeframe live validated FU sets the directional context;
+//    fall back to a 50-EMA slope when no FU is active. ─────────────────────────
+float _ema = ta.ema(close, 50)
+int   _trendBias = close > _ema ? 1 : close < _ema ? -1 : 0
+int   netBias =
+     nz(wV)   == 1 ? nz(wDir)   :
+     nz(dV)   == 1 ? nz(dDir)   :
+     nz(h4V)  == 1 ? nz(h4Dir)  :
+     nz(h1V)  == 1 ? nz(h1Dir)  :
+     nz(m15V) == 1 ? nz(m15Dir) :
+     nz(m5V)  == 1 ? nz(m5Dir)  : _trendBias
+
+// ── Persistent network registry — nodes are never deleted, only transitioned.
+//    state: 0 ACTIVE · 1 DORMANT · 2 CONSUMED · 3 HISTORICAL ──────────────────
+var array<float> nPx    = array.new_float()
+var array<float> nMid   = array.new_float()
+var array<int>   nDir   = array.new_int()
+var array<float> nSc    = array.new_float()
+var array<int>   nWt    = array.new_int()    // timeframe authority weight 1..8
+var array<int>   nState = array.new_int()
+var array<int>   nBar   = array.new_int()
+var array<int>   nRev   = array.new_int()
+
+f_wtTf(int _wt) => _wt == 8 ? "W" : _wt == 7 ? "D" : _wt == 6 ? "H4" : _wt == 5 ? "H1" : _wt == 4 ? "M15" : _wt == 3 ? "M5" : _wt == 2 ? "M3" : "M1"
+
+f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
+    array.push(nPx, _tip)
+    array.push(nMid, _mid)
+    array.push(nDir, _dir)
+    array.push(nSc, _sc)
+    array.push(nWt, _wt)
+    array.push(nState, 0)
+    array.push(nBar, bar_index)
+    array.push(nRev, 0)
+    if array.size(nPx) > nodeMax
+        array.shift(nPx)
+        array.shift(nMid)
+        array.shift(nDir)
+        array.shift(nSc)
+        array.shift(nWt)
+        array.shift(nState)
+        array.shift(nBar)
+        array.shift(nRev)
+
+// Remember a NEW validated FU per timeframe (tip change = a freshly born node).
+var float _pvW   = na
+var float _pvD   = na
+var float _pvH4  = na
+var float _pvH1  = na
+var float _pvM15 = na
+var float _pvM5  = na
+var float _pvM3  = na
+var float _pvM1  = na
+if nz(wV)   == 1 and not na(wTip)   and wTip   != _pvW
+    f_nodeAdd(wTip,   wMid,   nz(wDir),   nz(wSc),   8)
+    _pvW := wTip
+if nz(dV)   == 1 and not na(dTip)   and dTip   != _pvD
+    f_nodeAdd(dTip,   dMid,   nz(dDir),   nz(dSc),   7)
+    _pvD := dTip
+if nz(h4V)  == 1 and not na(h4Tip)  and h4Tip  != _pvH4
+    f_nodeAdd(h4Tip,  h4Mid,  nz(h4Dir),  nz(h4Sc),  6)
+    _pvH4 := h4Tip
+if nz(h1V)  == 1 and not na(h1Tip)  and h1Tip  != _pvH1
+    f_nodeAdd(h1Tip,  h1Mid,  nz(h1Dir),  nz(h1Sc),  5)
+    _pvH1 := h1Tip
+if nz(m15V) == 1 and not na(m15Tip) and m15Tip != _pvM15
+    f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
+    _pvM15 := m15Tip
+if nz(m5V)  == 1 and not na(m5Tip)  and m5Tip  != _pvM5
+    f_nodeAdd(m5Tip,  m5Mid,  nz(m5Dir),  nz(m5Sc),  3)
+    _pvM5 := m5Tip
+if nz(m3V)  == 1 and not na(m3Tip)  and m3Tip  != _pvM3
+    f_nodeAdd(m3Tip,  m3Mid,  nz(m3Dir),  nz(m3Sc),  2)
+    _pvM3 := m3Tip
+if nz(m1V)  == 1 and not na(m1Tip)  and m1Tip  != _pvM1
+    f_nodeAdd(m1Tip,  m1Mid,  nz(m1Dir),  nz(m1Sc),  1)
+    _pvM1 := m1Tip
+
+// State transitions + revisit counting (every bar, to maintain memory).
+float _atr = ta.atr(14)
+if array.size(nPx) > 0
+    for _i = 0 to array.size(nPx) - 1
+        if array.get(nState, _i) != 2
+            float _np  = array.get(nPx, _i)
+            int   _nd  = array.get(nDir, _i)
+            int   _age = bar_index - array.get(nBar, _i)
+            if (_nd == -1 ? high > _np : low < _np)
+                array.set(nState, _i, 2)                         // CONSUMED — price traded through it
+            else
+                if math.abs(close - _np) < _atr * 0.25
+                    array.set(nRev, _i, array.get(nRev, _i) + 1) // revisit (defense) raises authority
+                array.set(nState, _i, _age > historyBars ? 3 : _age > dormantBars ? 1 : 0)
+
+// Effective authority = sub-score + timeframe weight*4 + revisits*3.
+f_auth(int _i) => array.get(nSc, _i) + array.get(nWt, _i) * 4.0 + array.get(nRev, _i) * 3.0
+
+// ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
+var array<line>  route_lines = array.new<line>()
+var array<line>  level_lines = array.new<line>()
+var array<label> level_lbls  = array.new<label>()
+var label        route_lbl   = na
+var table        netPanel    = na
+
+if barstate.islast
+    if array.size(route_lines) > 0
+        for _i = 0 to array.size(route_lines) - 1
+            line.delete(array.get(route_lines, _i))
+        array.clear(route_lines)
+    if array.size(level_lines) > 0
+        for _i = 0 to array.size(level_lines) - 1
+            line.delete(array.get(level_lines, _i))
+        array.clear(level_lines)
+    if array.size(level_lbls) > 0
+        for _i = 0 to array.size(level_lbls) - 1
+            label.delete(array.get(level_lbls, _i))
+        array.clear(level_lbls)
+    if not na(route_lbl)
+        label.delete(route_lbl)
+
+    // ── Network levels + route eligibility tally ─────────────────────────────
+    int   _activeAligned = 0
+    int   _activeTotal   = 0
+    float _topAuth       = 0.0
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            int   _st = array.get(nState, _i)
+            float _a  = f_auth(_i)
+            if _st <= 1 and _a >= authMin
+                float _np = array.get(nPx, _i)
+                int   _nd = array.get(nDir, _i)
+                if showLevels
+                    color _c = _st == 0 ? (_nd == 1 ? color.new(#00ffaa, 25) : color.new(#ff6600, 25)) : color.new(color.gray, 60)
+                    array.push(level_lines, line.new(bar_index - 1, _np, bar_index + 12, _np, color = _c, width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
+                    array.push(level_lbls, label.new(bar_index + 12, _np, f_wtTf(array.get(nWt, _i)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 20), textcolor = _st == 0 ? (_nd == 1 ? #00ffaa : #ff6600) : color.gray, size = size.tiny))
+                if _st == 0
+                    _activeTotal += 1
+                    if _nd == netBias and netBias != 0
+                        _activeAligned += 1
+                    if _a > _topAuth
+                        _topAuth := _a
+
+    // ── Route: connected arrows through eligible bias-side active nodes ──────
+    float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
+    if showRoute and netBias != 0 and _routeConf >= routeMinConf
+        array<float> _rt = array.new_float()
+        if array.size(nPx) > 0
+            for _i = 0 to array.size(nPx) - 1
+                if array.get(nState, _i) == 0 and f_auth(_i) >= authMin and array.get(nDir, _i) == netBias
+                    float _np = array.get(nPx, _i)
+                    if netBias == 1 ? _np > close : _np < close
+                        array.push(_rt, _np)
+        if array.size(_rt) > 0
+            array.sort(_rt, netBias == 1 ? order.ascending : order.descending)
+            int   _x = bar_index
+            float _y = close
+            for _i = 0 to array.size(_rt) - 1
+                float _n  = array.get(_rt, _i)
+                int   _x2 = _x + 10
+                array.push(route_lines, line.new(_x, _y, _x2, _n, color = color.new(#b388ff, 0), width = 2, style = line.style_arrow_right))
+                _x := _x2
+                _y := _n
+            route_lbl := label.new(_x, _y, "ROUTE  " + str.tostring(math.round(_routeConf)) + "%  →  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_left, color = color.new(#7b2fff, 5), textcolor = color.white, size = size.normal)
+
+    // ── Conversation panel ──────────────────────────────────────────────────
+    if showPanel
+        if na(netPanel)
+            netPanel := table.new(position.top_right, 2, 12, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#7b2fff, 30), frame_width = 2, border_width = 0)
+        table.cell(netPanel, 0, 0, "INVISIBLE NETWORK", text_color = #b388ff, text_size = size.normal)
+        table.cell(netPanel, 1, 0, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.normal)
+        table.cell(netPanel, 0, 1, "Price", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 1, str.tostring(math.round_to_mintick(close)), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 2, "Route conf", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 2, str.tostring(math.round(_routeConf)) + "%", text_color = _routeConf >= 60 ? #5aff9e : color.yellow, text_size = size.small)
+        table.cell(netPanel, 0, 3, "Active nodes", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 3, str.tostring(_activeTotal) + " (" + str.tostring(_activeAligned) + " aligned)", text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 4, "Remembered", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 4, str.tostring(array.size(nPx)), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 5, "─ ACTIVE CONVERSATIONS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 5, "", text_color = color.white, text_size = size.small)
+        // collect eligible active node indices, then sort them by authority (desc)
+        array<int> _ord = array.new_int()
+        if array.size(nPx) > 0
+            for _i = 0 to array.size(nPx) - 1
+                if array.get(nState, _i) == 0 and f_auth(_i) >= authMin
+                    array.push(_ord, _i)
+        if array.size(_ord) > 1
+            for _a = 1 to array.size(_ord) - 1
+                int   _key  = array.get(_ord, _a)
+                float _keyA = f_auth(_key)
+                int   _b    = _a - 1
+                bool  _go   = _b >= 0
+                while _go
+                    if f_auth(array.get(_ord, _b)) < _keyA
+                        array.set(_ord, _b + 1, array.get(_ord, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_ord, _b + 1, _key)
+        int _rows = math.min(array.size(_ord), 6)
+        if _rows > 0
+            for _k = 0 to _rows - 1
+                int    _idx   = array.get(_ord, _k)
+                int    _nd    = array.get(nDir, _idx)
+                bool   _near  = math.abs(close - array.get(nPx, _idx)) < _atr * 0.5
+                string _state = (_nd == netBias and netBias != 0) ? (_near ? "REACTING" : "SEEKING") : "OPPOSING"
+                table.cell(netPanel, 0, 6 + _k, f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(array.get(nPx, _idx))), text_color = _nd == 1 ? #5aff9e : #ff5a5a, text_size = size.small)
+                table.cell(netPanel, 1, 6 + _k, _state + "  " + str.tostring(math.round(f_auth(_idx))), text_color = color.white, text_size = size.small)
