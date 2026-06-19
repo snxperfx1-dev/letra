@@ -673,11 +673,30 @@ if barstate.islast and webMode
         int _pPrimary = math.round(_routeConf)
         int _pAlt     = math.round((100.0 - _routeConf) * 0.6)
         int _pCounter = math.max(0, 100 - _pPrimary - _pAlt)
-        // FUTURE PROJECTION — link the near-term path to the higher-TF objectives
-        int _futC1 = f_htfNode(true,  _toIdx)              // HTF objective the CURRENT path feeds
-        int _futC2 = f_htfNode(true,  _futC1 >= 0 ? _futC1 : _toIdx)
-        int _futA1 = f_htfNode(false, _ctrIdx)             // HTF objective the ALTERNATE path feeds
-        bool _futC2ok = _futC2 >= 0 and _futC2 != _toIdx and _futC2 != _futC1
+        float _atrCP   = math.max(_atr, 1e-10)
+        float _projMin = _atrCP * 2.0
+        float _toPx    = _toIdx  >= 0 ? array.get(nPx, _toIdx)  : close
+        float _ctrPx   = _ctrIdx >= 0 ? array.get(nPx, _ctrIdx) : close
+        // ── FUTURE PROJECTION — what price does AFTER the current / alternate
+        //    path completes. The near path already collects EVERY bias-side node,
+        //    so the future must reach FURTHER: prefer a higher-TF node that sits
+        //    ≥2·ATR beyond the near target; if the network has no node that far
+        //    out, project a measured-move EXTENSION of the leg so it always shows
+        //    a genuine next objective instead of duplicating the current path.
+        int   _deepCur = array.size(_fwdCP) > 0 ? array.get(_fwdCP, array.size(_fwdCP) - 1) : -1
+        float _endCur  = _deepCur >= 0 ? array.get(nPx, _deepCur) : close
+        int   _deepAlt = array.size(_bwdCP) > 0 ? array.get(_bwdCP, array.size(_bwdCP) - 1) : -1
+        float _endAlt  = _deepAlt >= 0 ? array.get(nPx, _deepAlt) : close
+        int   _futCn = f_htfNode(true,  _toIdx)
+        int   _futAn = f_htfNode(false, _ctrIdx)
+        bool  _futCisNode = _futCn >= 0 and (netBias == -1 ? array.get(nPx, _futCn) < _toPx  - _projMin : array.get(nPx, _futCn) > _toPx  + _projMin)
+        bool  _futAisNode = _futAn >= 0 and (netBias == -1 ? array.get(nPx, _futAn) > _ctrPx + _projMin : array.get(nPx, _futAn) < _ctrPx - _projMin)
+        float _spanC  = math.max(math.abs(close - _endCur), _projMin)
+        float _spanA  = math.max(math.abs(close - _endAlt), _projMin)
+        float _futCPx = _futCisNode ? array.get(nPx, _futCn) : (netBias == -1 ? _endCur - _spanC : _endCur + _spanC)
+        float _futAPx = _futAisNode ? array.get(nPx, _futAn) : (netBias == -1 ? _endAlt + _spanA : _endAlt - _spanA)
+        string _futCStr = _futCisNode ? f_cpNode(_futCn) : ("proj " + (netBias == -1 ? "▼ " : "▲ ") + str.tostring(math.round_to_mintick(_futCPx)))
+        string _futAStr = _futAisNode ? f_cpNode(_futAn) : ("proj " + (netBias == -1 ? "▲ " : "▼ ") + str.tostring(math.round_to_mintick(_futAPx)))
         bool _inFez = not na(_fezHiPx) and not na(_fezLoPx) and close <= _fezHiPx and close >= _fezLoPx
         string _loc = _inFez ? ("FEZ " + f_wtTf(_fezLoW) + "↔" + f_wtTf(_fezHiW)) : (not na(_fezHiPx) and close > _fezHiPx ? "above network" : not na(_fezLoPx) and close < _fezLoPx ? "below network" : "mid-network")
         string _bw = netBias == 1 ? "bullish" : netBias == -1 ? "bearish" : "flat"
@@ -694,18 +713,15 @@ if barstate.islast and webMode
                 _narr := _narr + "\nIf consumed, next objective " + f_cpNode(_thenIdx) + "."
         else
             _narr := _narr + "No bias-side target left — likely at an objective; watch for absorption / reversal."
-        // future story — beyond the immediate path
-        if _futC1 >= 0
-            _narr := _narr + "\nStory: once the current path completes it feeds the " + f_cpNode(_futC1) + " HTF objective" + (_futC2ok ? ", then " + f_cpNode(_futC2) : "") + "."
-        if _futA1 >= 0
-            _narr := _narr + " The alternate would instead route toward " + f_cpNode(_futA1) + "."
+        // future story — what happens beyond the immediate path
+        _narr := _narr + "\nStory: after the current path, price extends toward " + _futCStr + (_futCisNode ? " (higher-TF objective)" : " (measured-move extension)") + ". The alternate routes toward " + _futAStr + "."
         table.cell(coPilot, 0, 0, "◆ NETWORK CO-PILOT    " + (netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT"), text_color = #22d3ee, text_size = size.large, text_halign = text.align_left)
         table.cell(coPilot, 0, 1, "Price " + str.tostring(math.round_to_mintick(close)) + "    ·    " + _loc, text_color = color.white, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 2, "PRIMARY " + str.tostring(_pPrimary) + "%    → " + f_cpNode(_toIdx) + "   → " + f_cpNode(_thenIdx), text_color = #5aff9e, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 3, "ALTERNATE " + str.tostring(_pAlt) + "%    → " + f_cpNode(_altIdx), text_color = color.yellow, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 4, "COUNTER " + str.tostring(_pCounter) + "%    → " + f_cpNode(_ctrIdx), text_color = #ff8a8a, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 5, "─ FUTURE PROJECTION ─", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
-        table.cell(coPilot, 0, 6, "Future CURRENT      → " + f_cpNode(_futC1) + (_futC2ok ? "   → " + f_cpNode(_futC2) : ""), text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
-        table.cell(coPilot, 0, 7, "Future ALTERNATE  → " + f_cpNode(_futA1), text_color = #ffd28a, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 6, "Future CURRENT      → " + _futCStr, text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 7, "Future ALTERNATE  → " + _futAStr, text_color = #ffd28a, text_size = size.normal, text_halign = text.align_left)
         table.cell(coPilot, 0, 8, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.small, text_halign = text.align_left)
         table.cell(coPilot, 0, 9, _narr, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
