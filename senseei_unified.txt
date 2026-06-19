@@ -1,0 +1,474 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// MASTER SENSEEI — UNIFIED (self-contained: no source-linking required)
+// One indicator that embeds the Invisible Network node engine AND an internal
+// reconstruction of Letra's signal layer (wave direction · HTF stack alignment ·
+// Energy / Resolution / Attractor framework), then runs the Senseei meta-
+// intelligence (Alignment · Contradiction · Threat · Confidence · Timing · Intent
+// · Opportunity · Action · Story) on those internal signals and prints the result.
+//
+// Nothing to wire. Add it to a chart and it analyses everything inside itself.
+// For the FULL multi-timeframe network, run it on M1–M15 (Pine builds the network
+// from the chart timeframe upward).
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("Master Senseei", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+string GRP = "Master Senseei"
+float  wickFrac    = input.float(0.3, "FU spike: min wick / range",   group = GRP, minval = 0.15, maxval = 0.9, step = 0.05)
+int    lookback    = input.int  (3,   "FU spike: structure lookback", group = GRP, minval = 2, maxval = 30)
+int    authMin     = input.int  (45,  "Min node authority",           group = GRP, minval = 0, maxval = 120)
+int    nodeMax     = input.int  (250, "Max remembered nodes",         group = GRP, minval = 10, maxval = 500)
+int    dormantBars = input.int  (120, "Bars until dormant",           group = GRP, minval = 20, maxval = 2000)
+int    historyBars = input.int  (600, "Bars until historical",        group = GRP, minval = 100, maxval = 5000)
+bool   showNet     = input.bool (true, "Show network levels",         group = GRP)
+bool   showWeb     = input.bool (true, "Show conversation web",       group = GRP)
+int    webMaxEdges = input.int  (60,  "Conversation web — max edges", group = GRP, minval = 5, maxval = 200)
+bool   showFEZ     = input.bool (true, "Show FEZ corridor",           group = GRP)
+bool   showReadout = input.bool (true, "Show Engine Readout panel",   group = GRP)
+bool   showStrat   = input.bool (true, "Show Chief Strategist panel", group = GRP)
+bool   showVerdict = input.bool (true, "Show verdict label",          group = GRP)
+int    minConf     = input.int  (55,  "Min confidence to ATTACK",     group = GRP, minval = 0, maxval = 100)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PART A — INVISIBLE NETWORK ENGINE (embedded)
+// ═══════════════════════════════════════════════════════════════════════════════
+f_safeTF(simple string _tf) => timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+// FU / FLIP detector — dominant rejection wick at a local extreme (swept OR not).
+f_fuPool(simple float _wf, simple int _lb) =>
+    var float _tip = na
+    var float _bH = na
+    var float _bL = na
+    var float _mid = na
+    var int   _dir = 0
+    var bool  _have = false
+    var bool  _conf = false
+    float _rng = math.max(high - low, 1e-10)
+    float _pHi = ta.highest(high, _lb)[1]
+    float _pLo = ta.lowest(low,  _lb)[1]
+    float _uw  = (high - math.max(open, close)) / _rng
+    float _lw  = (math.min(open, close) - low)  / _rng
+    bool  _localTop = high >= ta.highest(high, _lb)
+    bool  _localBot = low  <= ta.lowest(low,  _lb)
+    bool  _bear = _uw >= _wf and ((not na(_pHi) and high >= _pHi and close < _pHi) or (_localTop and close < open))
+    bool  _bull = _lw >= _wf and ((not na(_pLo) and low  <= _pLo and close > _pLo) or (_localBot and close > open))
+    if _bear
+        _dir := -1
+        _tip := high
+        _bH := math.max(open, close)
+        _bL := math.min(open, close)
+        _mid := _bH + (_tip - _bH) * 0.5
+        _have := true
+        _conf := false
+    else if _bull
+        _dir := 1
+        _tip := low
+        _bH := math.max(open, close)
+        _bL := math.min(open, close)
+        _mid := _tip + (_bL - _tip) * 0.5
+        _have := true
+        _conf := false
+    if _have and _dir == -1 and not _conf and close < _bL
+        _conf := true
+    if _have and _dir == 1 and not _conf and close > _bH
+        _conf := true
+    float _wk = (_dir == -1 and _have) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and _have) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    float _score = 20.0 + math.min(25.0, _wk * 15.0) + (_conf ? 30.0 : 0.0) + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
+    [_have ? _tip : na, _mid, _dir, _have ? 1 : 0, _score]
+
+// Scans (MN → M1) + native chart-resolution scan.
+[mnTip, mnMid, mnDir, mnV, mnSc]  = request.security(syminfo.tickerid, f_safeTF("M"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[wTip,  wMid,  wDir,  wV,  wSc]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[dTip,  dMid,  dDir,  dV,  dSc]   = request.security(syminfo.tickerid, f_safeTF("D"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h4Tip, h4Mid, h4Dir, h4V, h4Sc]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h1Tip, h1Mid, h1Dir, h1V, h1Sc]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m15Tip,m15Mid,m15Dir,m15V,m15Sc] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m5Tip, m5Mid, m5Dir, m5V, m5Sc]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[cTip,  cMid,  cDir,  cV,  cSc]   = f_fuPool(wickFrac, lookback)
+
+float _ema50 = ta.ema(close, 50)
+int   netBias = nz(mnV) == 1 ? nz(mnDir) : nz(wV) == 1 ? nz(wDir) : nz(dV) == 1 ? nz(dDir) : nz(h4V) == 1 ? nz(h4Dir) : nz(h1V) == 1 ? nz(h1Dir) : nz(m15V) == 1 ? nz(m15Dir) : nz(m5V) == 1 ? nz(m5Dir) : (close > _ema50 ? 1 : close < _ema50 ? -1 : 0)
+
+// Registry
+var array<float> nPx    = array.new_float()
+var array<float> nMid   = array.new_float()
+var array<int>   nDir   = array.new_int()
+var array<float> nSc    = array.new_float()
+var array<int>   nWt    = array.new_int()
+var array<int>   nState = array.new_int()
+var array<int>   nBar   = array.new_int()
+var array<int>   nRev   = array.new_int()
+
+f_wtTf(int _wt) => _wt == 9 ? "MN" : _wt == 8 ? "W" : _wt == 7 ? "D" : _wt == 6 ? "H4" : _wt == 5 ? "H1" : _wt == 4 ? "M15" : _wt == 3 ? "M5" : _wt == 2 ? "M3" : "M1"
+f_tfColor(int _wt) => _wt == 9 ? color.white : _wt == 8 ? #ffd000 : _wt == 7 ? #ffe96b : _wt == 6 ? #22d3ee : _wt == 5 ? #b388ff : _wt == 4 ? #5a8bff : _wt == 3 ? #5aff9e : _wt == 2 ? #9ef0c0 : color.gray
+
+f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
+    array.push(nPx, _tip)
+    array.push(nMid, _mid)
+    array.push(nDir, _dir)
+    array.push(nSc, _sc)
+    array.push(nWt, _wt)
+    array.push(nState, 0)
+    array.push(nBar, bar_index)
+    array.push(nRev, 0)
+    if array.size(nPx) > nodeMax
+        array.shift(nPx)
+        array.shift(nMid)
+        array.shift(nDir)
+        array.shift(nSc)
+        array.shift(nWt)
+        array.shift(nState)
+        array.shift(nBar)
+        array.shift(nRev)
+
+int  _chartSec = timeframe.in_seconds()
+int  _chartWt  = _chartSec >= timeframe.in_seconds("M") ? 9 : _chartSec >= timeframe.in_seconds("W") ? 8 : _chartSec >= timeframe.in_seconds("D") ? 7 : _chartSec >= 14400 ? 6 : _chartSec >= 3600 ? 5 : _chartSec >= 900 ? 4 : _chartSec >= 300 ? 3 : _chartSec >= 180 ? 2 : 1
+bool _okMN = timeframe.in_seconds("M")   > _chartSec
+bool _okW  = timeframe.in_seconds("W")   > _chartSec
+bool _okD  = timeframe.in_seconds("D")   > _chartSec
+bool _okH4 = timeframe.in_seconds("240") > _chartSec
+bool _okH1 = timeframe.in_seconds("60")  > _chartSec
+bool _okM15= timeframe.in_seconds("15")  > _chartSec
+bool _okM5 = timeframe.in_seconds("5")   > _chartSec
+var float _pvMN = na
+var float _pvW = na
+var float _pvD = na
+var float _pvH4 = na
+var float _pvH1 = na
+var float _pvM15 = na
+var float _pvM5 = na
+var float _pvC = na
+if cV == 1 and not na(cTip) and (na(_pvC) or cTip != _pvC)
+    f_nodeAdd(cTip, cMid, nz(cDir), nz(cSc), _chartWt)
+    _pvC := cTip
+if _okMN and nz(mnV) == 1 and not na(mnTip) and (na(_pvMN) or mnTip != _pvMN)
+    f_nodeAdd(mnTip, mnMid, nz(mnDir), nz(mnSc), 9)
+    _pvMN := mnTip
+if _okW and nz(wV) == 1 and not na(wTip) and (na(_pvW) or wTip != _pvW)
+    f_nodeAdd(wTip, wMid, nz(wDir), nz(wSc), 8)
+    _pvW := wTip
+if _okD and nz(dV) == 1 and not na(dTip) and (na(_pvD) or dTip != _pvD)
+    f_nodeAdd(dTip, dMid, nz(dDir), nz(dSc), 7)
+    _pvD := dTip
+if _okH4 and nz(h4V) == 1 and not na(h4Tip) and (na(_pvH4) or h4Tip != _pvH4)
+    f_nodeAdd(h4Tip, h4Mid, nz(h4Dir), nz(h4Sc), 6)
+    _pvH4 := h4Tip
+if _okH1 and nz(h1V) == 1 and not na(h1Tip) and (na(_pvH1) or h1Tip != _pvH1)
+    f_nodeAdd(h1Tip, h1Mid, nz(h1Dir), nz(h1Sc), 5)
+    _pvH1 := h1Tip
+if _okM15 and nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
+    f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
+    _pvM15 := m15Tip
+if _okM5 and nz(m5V) == 1 and not na(m5Tip) and (na(_pvM5) or m5Tip != _pvM5)
+    f_nodeAdd(m5Tip, m5Mid, nz(m5Dir), nz(m5Sc), 3)
+    _pvM5 := m5Tip
+
+float _atr = ta.atr(14)
+if array.size(nPx) > 0
+    for _i = 0 to array.size(nPx) - 1
+        if array.get(nState, _i) != 2
+            float _np = array.get(nPx, _i)
+            int   _nd = array.get(nDir, _i)
+            int   _age = bar_index - array.get(nBar, _i)
+            if (_nd == -1 ? close > _np : close < _np)
+                array.set(nState, _i, 2)
+            else
+                if math.abs(close - _np) < _atr * 0.25
+                    array.set(nRev, _i, array.get(nRev, _i) + 1)
+                int _wtn = array.get(nWt, _i)
+                array.set(nState, _i, _age > historyBars * _wtn ? 3 : _age > dormantBars * _wtn ? 1 : 0)
+
+f_auth(int _i) => array.get(nSc, _i) + array.get(nWt, _i) * 4.0 + array.get(nRev, _i) * 3.0
+
+f_pathNodes(bool _aheadSide) =>
+    array<int> _r = array.new_int()
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            float _np = array.get(nPx, _i)
+            bool _ahead = netBias == 1 ? _np > close : _np < close
+            if array.get(nState, _i) != 2 and f_auth(_i) >= authMin and (_aheadSide ? _ahead : not _ahead)
+                array.push(_r, _i)
+    if array.size(_r) > 1
+        for _a = 1 to array.size(_r) - 1
+            int _key = array.get(_r, _a)
+            float _kd = math.abs(close - array.get(nPx, _key))
+            int _b = _a - 1
+            bool _go = _b >= 0
+            while _go
+                if math.abs(close - array.get(nPx, array.get(_r, _b))) > _kd
+                    array.set(_r, _b + 1, array.get(_r, _b))
+                    _b -= 1
+                    _go := _b >= 0
+                else
+                    _go := false
+            array.set(_r, _b + 1, _key)
+    _r
+
+f_cpNode(int _i) => _i < 0 ? "—" : f_wtTf(array.get(nWt, _i)) + " " + (array.get(nDir, _i) == 1 ? "▲" : "▼") + " " + str.tostring(math.round_to_mintick(array.get(nPx, _i)))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PART B — LETRA SIGNAL LAYER (reconstructed internally)
+//   waveDir : execution direction = price vs its 50-EMA structure
+//   stackDir / stackPct : HTF alignment from the per-timeframe FU directions
+// ═══════════════════════════════════════════════════════════════════════════════
+int waveDir = close > _ema50 ? 1 : close < _ema50 ? -1 : 0
+int _sb = (nz(mnDir) == 1 ? 1 : 0) + (nz(wDir) == 1 ? 1 : 0) + (nz(dDir) == 1 ? 1 : 0) + (nz(h4Dir) == 1 ? 1 : 0) + (nz(h1Dir) == 1 ? 1 : 0) + (nz(m15Dir) == 1 ? 1 : 0) + (nz(m5Dir) == 1 ? 1 : 0)
+int _sbear = (nz(mnDir) == -1 ? 1 : 0) + (nz(wDir) == -1 ? 1 : 0) + (nz(dDir) == -1 ? 1 : 0) + (nz(h4Dir) == -1 ? 1 : 0) + (nz(h1Dir) == -1 ? 1 : 0) + (nz(m15Dir) == -1 ? 1 : 0) + (nz(m5Dir) == -1 ? 1 : 0)
+int   stackDir = _sb > _sbear ? 1 : _sbear > _sb ? -1 : 0
+float stackPct = math.max(_sb, _sbear) / 7.0 * 100.0
+
+// ── Drawing objects + hoisted state for global alerts ────────────────────────
+var array<line>  net_lines = array.new<line>()
+var array<label> net_lbls  = array.new<label>()
+var array<line>  web_lines = array.new<line>()
+var box          fezBox    = na
+var label        vLbl      = na
+var table        readout   = na
+var table        strat     = na
+var int    gMaster   = 0
+var float  gConflict = 0.0
+var string gAction   = "WAIT"
+
+if barstate.islast
+    if array.size(net_lines) > 0
+        for _i = 0 to array.size(net_lines) - 1
+            line.delete(array.get(net_lines, _i))
+        array.clear(net_lines)
+    if array.size(net_lbls) > 0
+        for _i = 0 to array.size(net_lbls) - 1
+            label.delete(array.get(net_lbls, _i))
+        array.clear(net_lbls)
+    if array.size(web_lines) > 0
+        for _i = 0 to array.size(web_lines) - 1
+            line.delete(array.get(web_lines, _i))
+        array.clear(web_lines)
+    if not na(fezBox)
+        box.delete(fezBox)
+
+    // ── Node tallies + network drawing ───────────────────────────────────────
+    int   _openMem = 0
+    int   _consumed = 0
+    int   _eligN = 0
+    float _bullAuth = 0.0
+    float _bearAuth = 0.0
+    int   _domIdx = -1
+    float _domAuth = 0.0
+    int   _attrIdx = -1
+    float _attrRank = -1.0
+    float _fezHi = na
+    float _fezLo = na
+    int   _fezHiW = 0
+    int   _fezLoW = 0
+    float _fezHiA = 0.0
+    float _fezLoA = 0.0
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            int _st = array.get(nState, _i)
+            if _st == 2
+                _consumed += 1
+            else
+                _openMem += 1
+            float _a = f_auth(_i)
+            if _st != 2 and _a >= authMin
+                float _np = array.get(nPx, _i)
+                int   _nd = array.get(nDir, _i)
+                int   _wt = array.get(nWt, _i)
+                _eligN += 1
+                if _nd == 1
+                    _bullAuth += _a
+                else if _nd == -1
+                    _bearAuth += _a
+                if _a > _domAuth
+                    _domAuth := _a
+                    _domIdx := _i
+                bool _onBias = netBias == -1 ? _np < close : _np > close
+                if _onBias
+                    float _rk = _wt * 1000.0 + _a
+                    if _rk > _attrRank
+                        _attrRank := _rk
+                        _attrIdx := _i
+                if _np > close and _a > _fezHiA
+                    _fezHi := _np
+                    _fezHiW := _wt
+                    _fezHiA := _a
+                if _np < close and _a > _fezLoA
+                    _fezLo := _np
+                    _fezLoW := _wt
+                    _fezLoA := _a
+                if showNet
+                    color _bc = f_tfColor(_wt)
+                    array.push(net_lines, line.new(bar_index - 1, _np, bar_index + 10, _np, color = color.new(_bc, _st == 0 ? 25 : 70), width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
+                    array.push(net_lbls, label.new(bar_index + 10, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 25), textcolor = _st == 0 ? _bc : color.gray, size = size.tiny))
+
+    // ── FEZ corridor ─────────────────────────────────────────────────────────
+    if showFEZ and not na(_fezHi) and not na(_fezLo)
+        fezBox := box.new(bar_index - 1, _fezHi, bar_index + 10, _fezLo, border_color = color.new(#7b2fff, 45), border_width = 1, bgcolor = color.new(#7b2fff, 90))
+
+    // ── Conversation web (clean dashed, right margin) ────────────────────────
+    if showWeb and array.size(nPx) > 0
+        array<int> _cv = array.new_int()
+        for _i = 0 to array.size(nPx) - 1
+            if array.get(nState, _i) != 2
+                array.push(_cv, _i)
+        if array.size(_cv) > webMaxEdges
+            for _a = 1 to array.size(_cv) - 1
+                int _key = array.get(_cv, _a)
+                float _ka = f_auth(_key)
+                int _b = _a - 1
+                bool _go = _b >= 0
+                while _go
+                    if f_auth(array.get(_cv, _b)) < _ka
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+            while array.size(_cv) > webMaxEdges
+                array.pop(_cv)
+        if array.size(_cv) > 1
+            for _a = 1 to array.size(_cv) - 1
+                int _key = array.get(_cv, _a)
+                float _kp = array.get(nPx, _key)
+                int _b = _a - 1
+                bool _go = _b >= 0
+                while _go
+                    if array.get(nPx, array.get(_cv, _b)) > _kp
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+            int _cx = bar_index + 2
+            for _i = 1 to array.size(_cv) - 1
+                color _ec = color.new(f_tfColor(array.get(nWt, array.get(_cv, _i))), 68)
+                array.push(web_lines, line.new(_cx, array.get(nPx, array.get(_cv, _i - 1)), _cx + 3, array.get(nPx, array.get(_cv, _i)), color = _ec, width = 1, style = line.style_dashed))
+                _cx := _cx + 3
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PART C — ENERGY RESOLUTION (derived from the live node populations)
+    // ══════════════════════════════════════════════════════════════════════════
+    float _totN = _openMem + _consumed
+    float completion = _totN > 0 ? _consumed / _totN * 100.0 : 0.0
+    float residual = 100.0 - completion
+    int   resCode = completion >= 75.0 ? 2 : completion >= 40.0 ? 1 : 0
+    float attractor = _attrIdx >= 0 ? math.min(100.0, f_auth(_attrIdx)) : 0.0
+    float pressure = (_bullAuth + _bearAuth) > 0 ? (_bullAuth - _bearAuth) / (_bullAuth + _bearAuth) * 100.0 : 0.0
+    int   pdir = pressure > 12 ? 1 : pressure < -12 ? -1 : 0
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PART D — SENSEEI META-INTELLIGENCE
+    // ══════════════════════════════════════════════════════════════════════════
+    int _vt1 = waveDir
+    int _vt2 = stackDir
+    int _vt3 = netBias
+    int _vt4 = pdir
+    int _sum = _vt1 + _vt2 + _vt3 + _vt4
+    int master = _sum > 0 ? 1 : _sum < 0 ? -1 : 0
+    int _cast = (_vt1 != 0 ? 1 : 0) + (_vt2 != 0 ? 1 : 0) + (_vt3 != 0 ? 1 : 0) + (_vt4 != 0 ? 1 : 0)
+    int _forV = (_vt1 == master and _vt1 != 0 ? 1 : 0) + (_vt2 == master and _vt2 != 0 ? 1 : 0) + (_vt3 == master and _vt3 != 0 ? 1 : 0) + (_vt4 == master and _vt4 != 0 ? 1 : 0)
+    float alignment = _cast > 0 ? _forV / _cast * 100.0 : 50.0
+    float conflict = _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
+    float threat = math.max(0.0, math.min(100.0, conflict * 0.45 + residual * 0.30 + (pdir != 0 and pdir != master ? 20.0 : 0.0) + (resCode == 1 ? 12.0 : 0.0)))
+    float confidence = math.max(0.0, math.min(100.0, alignment * 0.45 + stackPct * 0.20 + attractor * 0.15 + math.min(20.0, _eligN * 1.5) - threat * 0.20))
+    string timing = resCode == 2 ? "RESOLVED" : completion < 15 ? "VERY EARLY" : completion < 35 ? "EARLY" : completion < 55 ? "DEVELOPING" : completion < 78 ? "MID CYCLE" : completion < 96 ? "LATE" : "TERMINAL"
+    string intent = master == 0 ? "BALANCE" : conflict > 55 ? "ABSORPTION" : resCode == 2 ? "ROTATION" : resCode == 1 ? "RESOLUTION" : (timing == "VERY EARLY" or timing == "EARLY") ? "EXPANSION" : (timing == "DEVELOPING" or timing == "MID CYCLE") ? "CONTINUATION" : "DELIVERY"
+    float oppScore = math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
+    string opportunity = master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
+    string action = master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : resCode == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
+
+    gMaster := master
+    gConflict := conflict
+    gAction := action
+
+    // ── Story / Language engine (energy terms) ───────────────────────────────
+    string _eL = master == 1 ? "Expansion remains in control." : master == -1 ? "Downside delivery remains in control." : "Energy is balanced — no clean control."
+    string _rL = resCode == 2 ? "The process has RESOLVED — energy cleaned." : resCode == 1 ? "Process PARTIALLY resolved — cleaning incomplete." : "Primary structure UNRESOLVED — energy uncleaned."
+    string _aL = attractor >= 60 ? "A strong unresolved attractor is pulling price." : attractor >= 35 ? "A moderate attractor is active." : "No dominant attractor."
+    string _nL = "Network: " + str.tostring(_eligN) + " live structures, " + (pdir == master and master != 0 ? "agreeing." : pdir != 0 and pdir != master ? "opposing." : "neutral.")
+    string _tL = threat < 25 ? "Threat low." : threat < 55 ? "Threat moderate." : "Threat high."
+    string story = _eL + " " + _rL + " " + _aL + " " + _nL + " " + _tL
+
+    string matters = ""
+    matters := matters + (attractor >= 50 ? "Primary attractor · " : "")
+    matters := matters + (residual >= 50 ? "Residual energy · " : "")
+    matters := matters + (resCode == 0 ? "Unresolved structure · " : "")
+    matters := matters + (_eligN >= 18 ? "Network conversation · " : "")
+    matters := matters == "" ? "• Awaiting a dominant structure" : "• " + str.replace_all(matters, " · ", "\n• ")
+    string nomatter = ""
+    nomatter := nomatter + (resCode == 2 ? "Completed structure · " : "")
+    nomatter := nomatter + (threat < 22 ? "Reversal threat · " : "")
+    nomatter := nomatter + (conflict < 18 ? "Minor pullback · " : "")
+    nomatter := nomatter == "" ? "—" : "• " + str.replace_all(nomatter, " · ", "\n• ")
+
+    array<int> _fwd = f_pathNodes(true)
+    int _nextIdx = array.size(_fwd) > 0 ? array.get(_fwd, 0) : -1
+
+    color vCol = master == 1 ? #00e676 : master == -1 ? #ff5252 : color.gray
+    color aCol = action == "ATTACK" ? #00e676 : action == "PREPARE" ? color.yellow : str.startswith(action, "MANAGE") ? #29b6f6 : color.gray
+
+    // ── Verdict label ─────────────────────────────────────────────────────────
+    if showVerdict
+        if not na(vLbl)
+            label.delete(vLbl)
+        vLbl := label.new(bar_index + 3, close, "SENSEEI  " + action + "   " + intent + "  " + str.tostring(math.round(confidence)) + "%", style = label.style_label_left, color = color.new(aCol, 8), textcolor = color.white, size = size.large)
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // PART E — PANELS
+    // ══════════════════════════════════════════════════════════════════════════
+    if showReadout
+        if na(readout)
+            readout := table.new(position.top_right, 2, 9, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
+        table.cell(readout, 0, 0, "ENGINE READOUT", text_color = #22d3ee, text_size = size.normal, text_halign = text.align_left)
+        table.cell(readout, 1, 0, "", text_size = size.small)
+        table.cell(readout, 0, 1, "Letra · Wave dir", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 1, waveDir == 1 ? "▲" : waveDir == -1 ? "▼" : "—", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 2, "Letra · Stack", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 2, (stackDir == 1 ? "▲ " : stackDir == -1 ? "▼ " : "— ") + str.tostring(math.round(stackPct)) + "%", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 3, "Letra · Resolution", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 3, resCode == 2 ? "RESOLVED" : resCode == 1 ? "PARTIAL" : "UNRESOLVED", text_color = resCode == 0 ? #ff8a8a : resCode == 1 ? color.yellow : #00e676, text_size = size.small)
+        table.cell(readout, 0, 4, "Letra · Residual", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 4, str.tostring(math.round(residual)) + "%", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 5, "Letra · Attractor", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 5, str.tostring(math.round(attractor)) + "  " + f_cpNode(_attrIdx), text_color = #ffd000, text_size = size.small)
+        table.cell(readout, 0, 6, "Network · Bias", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 6, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ —", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(readout, 0, 7, "Network · Nodes", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 7, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 8, "Network · Pressure", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 8, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #5aff9e : pdir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+
+    if showStrat
+        if na(strat)
+            strat := table.new(position.top_left, 2, 12, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
+        table.cell(strat, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
+        table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = vCol, text_size = size.large)
+        table.cell(strat, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 1, "", text_size = size.small)
+        table.cell(strat, 0, 2, story, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 2, "", text_size = size.small)
+        table.cell(strat, 0, 3, "WHAT MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 1, 3, "", text_size = size.small)
+        table.cell(strat, 0, 4, matters, text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 4, "", text_size = size.small)
+        table.cell(strat, 0, 5, "WHAT NO LONGER MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+        table.cell(strat, 1, 5, "", text_size = size.small)
+        table.cell(strat, 0, 6, nomatter, text_color = color.new(color.silver, 15), text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 6, "", text_size = size.small)
+        table.cell(strat, 0, 7, "PRIMARY INTENT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 7, intent, text_color = vCol, text_size = size.normal)
+        table.cell(strat, 0, 8, "ALIGN / CONFLICT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 8, str.tostring(math.round(alignment)) + "% / " + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #00e676 : color.yellow, text_size = size.normal)
+        table.cell(strat, 0, 9, "CONFIDENCE / THREAT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 9, str.tostring(math.round(confidence)) + "% / " + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #00e676 : color.yellow, text_size = size.normal)
+        table.cell(strat, 0, 10, "OPPORTUNITY / TIMING", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 10, opportunity + " · " + timing, text_color = opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : color.white, text_size = size.normal)
+        table.cell(strat, 0, 11, "ACTION  →  " + f_cpNode(_nextIdx), text_color = #ffd000, text_size = size.normal, text_halign = text.align_left)
+        table.cell(strat, 1, 11, action, text_color = aCol, text_size = size.large)
+
+// ── Alerts (global scope) ─────────────────────────────────────────────────────
+alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")
+alertcondition(gAction == "ATTACK" and gMaster == -1, "Senseei ATTACK Short", "Master Senseei: ATTACK short")
+alertcondition(gConflict > 60, "Senseei CONFLICT", "Master Senseei: engines in conflict")
