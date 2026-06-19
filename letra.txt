@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 34", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 35", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3659,94 +3659,6 @@ if conv_bias != 0
         conv_seekTf := "M5"
         conv_seekSc := nz(m5_fuScore)
 float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, conv_seekSc * 0.7 + fu_recursiveAlign * 0.3)
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ENGINE 1A.13 — INVISIBLE NETWORK ENGINE (persistent FU node memory)
-// ───────────────────────────────────────────────────────────────────────────────
-// Every validated FU (per TF) is REMEMBERED as a network node and never deleted —
-// it transitions ACTIVE -> DORMANT -> HISTORICAL with age, or CONSUMED once price
-// trades through it. Revisits are counted and raise effective authority. Strong
-// active/dormant nodes are drawn as horizontal network levels; the route arrows
-// above show the live conversation between them. Registry capped (oldest evicted).
-showNetwork = input.bool(true, "Show FU Network Levels (1A.13 — persistent nodes)", group=GRP_FUOB)
-int ineMax = 48
-var array<float> ine_px    = array.new_float()
-var array<int>   ine_dir   = array.new_int()
-var array<float> ine_auth  = array.new_float()
-var array<int>   ine_state = array.new_int()   // 0 ACTIVE · 1 DORMANT · 2 CONSUMED · 3 HISTORICAL
-var array<int>   ine_bar   = array.new_int()
-var array<int>   ine_rev   = array.new_int()
-f_ineAdd(float _tip, int _dir, float _auth) =>
-    array.push(ine_px, _tip)
-    array.push(ine_dir, _dir)
-    array.push(ine_auth, _auth)
-    array.push(ine_state, 0)
-    array.push(ine_bar, bar_index)
-    array.push(ine_rev, 0)
-    if array.size(ine_px) > ineMax
-        array.shift(ine_px)
-        array.shift(ine_dir)
-        array.shift(ine_auth)
-        array.shift(ine_state)
-        array.shift(ine_bar)
-        array.shift(ine_rev)
-
-// Capture a NEW validated FU per TF (tip change = a freshly remembered node).
-var float _ineW = na
-var float _ineD = na
-var float _ineH4 = na
-var float _ineH1 = na
-var float _ineM15 = na
-var float _ineM5 = na
-if nz(w_fuValid)   == 1 and not na(w_fuTip)   and w_fuTip   != _ineW
-    f_ineAdd(w_fuTip,   nz(w_fuDir),   nz(w_fuScore) + 10)
-    _ineW := w_fuTip
-if nz(d_fuValid)   == 1 and not na(d_fuTip)   and d_fuTip   != _ineD
-    f_ineAdd(d_fuTip,   nz(d_fuDir),   nz(d_fuScore) + 8)
-    _ineD := d_fuTip
-if nz(h4_fuValid)  == 1 and not na(h4_fuTip)  and h4_fuTip  != _ineH4
-    f_ineAdd(h4_fuTip,  nz(h4_fuDir),  nz(h4_fuScore) + 6)
-    _ineH4 := h4_fuTip
-if nz(h1_fuValid)  == 1 and not na(h1_fuTip)  and h1_fuTip  != _ineH1
-    f_ineAdd(h1_fuTip,  nz(h1_fuDir),  nz(h1_fuScore) + 4)
-    _ineH1 := h1_fuTip
-if nz(m15_fuValid) == 1 and not na(m15_fuTip) and m15_fuTip != _ineM15
-    f_ineAdd(m15_fuTip, nz(m15_fuDir), nz(m15_fuScore) + 2)
-    _ineM15 := m15_fuTip
-if nz(m5_fuValid)  == 1 and not na(m5_fuTip)  and m5_fuTip  != _ineM5
-    f_ineAdd(m5_fuTip,  nz(m5_fuDir),  nz(m5_fuScore))
-    _ineM5 := m5_fuTip
-
-// State transitions + revisit counting (runs every bar to maintain memory).
-if array.size(ine_px) > 0
-    for _ni = 0 to array.size(ine_px) - 1
-        if array.get(ine_state, _ni) != 2
-            float _np  = array.get(ine_px, _ni)
-            int   _nd  = array.get(ine_dir, _ni)
-            int   _age = bar_index - array.get(ine_bar, _ni)
-            if (_nd == -1 ? high > _np : low < _np)
-                array.set(ine_state, _ni, 2)
-            else
-                if math.abs(close - _np) < atr * 0.25
-                    array.set(ine_rev, _ni, array.get(ine_rev, _ni) + 1)
-                array.set(ine_state, _ni, _age > 600 ? 3 : _age > 120 ? 1 : 0)
-
-// Draw remembered network levels (strong, not-consumed nodes) on the last bar.
-var array<line> ine_lines = array.new<line>()
-if barstate.islast
-    if array.size(ine_lines) > 0
-        for _li = 0 to array.size(ine_lines) - 1
-            line.delete(array.get(ine_lines, _li))
-        array.clear(ine_lines)
-    if showNetwork and array.size(ine_px) > 0
-        for _ni = 0 to array.size(ine_px) - 1
-            int   _st   = array.get(ine_state, _ni)
-            float _auth = array.get(ine_auth, _ni) + array.get(ine_rev, _ni) * 2.0
-            if _auth >= fuAuthMin and _st <= 1
-                float _np = array.get(ine_px, _ni)
-                int   _nd = array.get(ine_dir, _ni)
-                color _c  = _st == 0 ? (_nd == 1 ? color.new(#00ffaa, 30) : color.new(#ff6600, 30)) : color.new(color.gray, 65)
-                array.push(ine_lines, line.new(bar_index - 1, _np, bar_index + 10, _np, color=_c, width=1, style=_st == 0 ? line.style_solid : line.style_dotted))
 
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
