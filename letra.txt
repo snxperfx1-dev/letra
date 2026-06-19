@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 24", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 25", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3370,6 +3370,7 @@ if _fuN3 > 0
 // FU / FU MID / MAGNET / INDUCTION BAND and exposes fuw_* for downstream engines.
 showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
 fuwMinWickFrac = input.float(0.5,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.3, maxval=0.9, step=0.05)
+fuwLookback    = input.int  (5,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
 
 var float fuw_tip      = na      // wick extreme (manipulation point)
 var float fuw_bodyHigh = na
@@ -3383,11 +3384,16 @@ var int   fuw_bar      = na
 var bool  fuw_valid    = false   // becomes true once the opposite extreme is destroyed
 var float fuw_strength = na
 
-// NEW CANDIDATE — a spike through the most recent opposing swing that closes back
-// inside it (currSwingHigh/Low are the last confirmed pivots = real prior structure).
+// NEW CANDIDATE — a spike through LOCAL structure (the highest high / lowest low
+// of the prior `fuwLookback` bars) that closes back inside it: the "middle finger"
+// that sweeps recent liquidity. Using LOCAL structure (not just the major swing)
+// is what catches the obvious FU spikes through nearby equal highs / lows. The
+// swept level becomes the captured left-liquidity pool (the future magnet).
 float _fuwRange    = math.max(high - low, 1e-10)
-bool  _fuwBearCand = not na(currSwingHigh) and high > currSwingHigh and close < currSwingHigh and (high - math.max(open, close)) / _fuwRange >= fuwMinWickFrac
-bool  _fuwBullCand = not na(currSwingLow)  and low  < currSwingLow  and close > currSwingLow  and (math.min(open, close) - low) / _fuwRange >= fuwMinWickFrac
+float _fuwPriorHi  = ta.highest(high, fuwLookback)[1]
+float _fuwPriorLo  = ta.lowest(low,  fuwLookback)[1]
+bool  _fuwBearCand = not na(_fuwPriorHi) and high > _fuwPriorHi and close < _fuwPriorHi and (high - math.max(open, close)) / _fuwRange >= fuwMinWickFrac
+bool  _fuwBullCand = not na(_fuwPriorLo) and low  < _fuwPriorLo and close > _fuwPriorLo and (math.min(open, close) - low) / _fuwRange >= fuwMinWickFrac
 
 if _fuwBearCand
     fuw_dir      := -1
@@ -3397,7 +3403,7 @@ if _fuwBearCand
     fuw_mid      := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.50
     fuw_mid38    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.38
     fuw_mid62    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.62
-    fuw_leftPool := currSwingHigh
+    fuw_leftPool := _fuwPriorHi
     fuw_bar      := bar_index
     fuw_valid    := false
     fuw_strength := math.min(100.0, (fuw_tip - fuw_bodyHigh) / math.max(atr, 1e-10) * 40.0 + 40.0)
@@ -3409,7 +3415,7 @@ else if _fuwBullCand
     fuw_mid      := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.50
     fuw_mid38    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.38
     fuw_mid62    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.62
-    fuw_leftPool := currSwingLow
+    fuw_leftPool := _fuwPriorLo
     fuw_bar      := bar_index
     fuw_valid    := false
     fuw_strength := math.min(100.0, (fuw_bodyLow - fuw_tip) / math.max(atr, 1e-10) * 40.0 + 40.0)
@@ -3483,23 +3489,17 @@ f_fuPool(simple float _wickFrac) =>
     var float _pool  = na
     var bool  _valid = false
     var int   _fbar  = na
-    var float _lastPH = na
-    var float _lastPL = na
-    float _ph = ta.pivothigh(high, 5, 5)
-    float _pl = ta.pivotlow(low, 5, 5)
-    if not na(_ph)
-        _lastPH := _ph
-    if not na(_pl)
-        _lastPL := _pl
     float _rng  = math.max(high - low, 1e-10)
-    bool  _bear = not na(_lastPH) and high > _lastPH and close < _lastPH and (high - math.max(open, close)) / _rng >= _wickFrac
-    bool  _bull = not na(_lastPL) and low  < _lastPL and close > _lastPL and (math.min(open, close) - low) / _rng >= _wickFrac
+    float _priorHi = ta.highest(high, 5)[1]
+    float _priorLo = ta.lowest(low,  5)[1]
+    bool  _bear = not na(_priorHi) and high > _priorHi and close < _priorHi and (high - math.max(open, close)) / _rng >= _wickFrac
+    bool  _bull = not na(_priorLo) and low  < _priorLo and close > _priorLo and (math.min(open, close) - low) / _rng >= _wickFrac
     if _bear
         _dir := -1
         _tip := high
         _bH  := math.max(open, close)
         _bL  := math.min(open, close)
-        _pool := _lastPH
+        _pool := _priorHi
         _fbar := bar_index
         _valid := false
     else if _bull
@@ -3507,7 +3507,7 @@ f_fuPool(simple float _wickFrac) =>
         _tip := low
         _bH  := math.max(open, close)
         _bL  := math.min(open, close)
-        _pool := _lastPL
+        _pool := _priorLo
         _fbar := bar_index
         _valid := false
     if not _valid and _dir == -1 and not na(_bL) and bar_index > nz(_fbar) and close < _bL
@@ -5933,7 +5933,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosCtl, 0, 8, control_state + "  ·  " + control_transfer, text_color=color.white, text_size=size.small)
 
         // ── SECTION 5: DESTINATION WAR (top right) — candidate competition ──
-        var table mosWar = table.new(position.top_right, 1, 6, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+        var table mosWar = table.new(position.top_right, 1, 9, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
         table.cell(mosWar, 0, 0, "═══  DESTINATION WAR  ═══", text_color=#00e5ff, text_size=size.small)
         table.cell(mosWar, 0, 1, na(dc_bestPrice) ? "No active competition" : ("WINNER  " + dc_bestType), text_color=#5aff9e, text_size=size.small)
         table.cell(mosWar, 0, 2, na(dc_bestPrice) ? "-" : (_mosDestPx + "   " + tpl_winnerClass + "   " + war_state), text_color=color.white, text_size=size.small)
@@ -5941,14 +5941,9 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosWar, 0, 4, "─ field ─", text_color=#7a86a8, text_size=size.tiny)
         table.cell(mosWar, 0, 5, dc_scoreboard, text_color=#b8c4e0, text_size=size.tiny)
 
-        // ── SECTION 6: FU MAP (middle right) — recursive FU wick authority ──
-        var table mosFU = table.new(position.middle_right, 1, 6, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#ff2fd0, 30), frame_width=2, border_width=0)
-        table.cell(mosFU, 0, 0, "═══  FU MAP  ═══", text_color=#ff7fe6, text_size=size.small)
-        table.cell(mosFU, 0, 1, "H4 " + (nz(h4_fuValid) == 1 ? "ACTIVE" : "—") + "   H1 " + (nz(h1_fuValid) == 1 ? "ACTIVE" : "—"), text_color=color.white, text_size=size.small)
-        table.cell(mosFU, 0, 2, "M15 " + (nz(m15_fuValid) == 1 ? "ACTIVE" : "—") + "   M5 " + (fuw_valid ? "ACTIVE" : "—"), text_color=color.white, text_size=size.small)
-        table.cell(mosFU, 0, 3, "Recursive Align  " + str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#5aff9e, text_size=size.small)
-        table.cell(mosFU, 0, 4, na(fu_winTarget) ? "Magnet  —" : ("Magnet  " + f_v72_px(fu_winTarget) + "  (" + fu_winSrc + ")"), text_color=#ffd000, text_size=size.small)
-        table.cell(mosFU, 0, 5, fuw_inductionExpected ? "Induction expected (midpoint)" : "Awaiting midpoint entry", text_color=#ffb347, text_size=size.small)
+        table.cell(mosWar, 0, 6, "─  FU MAP  ─   H4 " + (nz(h4_fuValid) == 1 ? "●" : "·") + " H1 " + (nz(h1_fuValid) == 1 ? "●" : "·") + " M15 " + (nz(m15_fuValid) == 1 ? "●" : "·") + " M5 " + (fuw_valid ? "●" : "·"), text_color=#ff7fe6, text_size=size.tiny)
+        table.cell(mosWar, 0, 7, (na(fu_winTarget) ? "Magnet —" : ("Magnet " + f_v72_px(fu_winTarget) + " " + fu_winSrc)) + "   Align " + str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#ffd000, text_size=size.small)
+        table.cell(mosWar, 0, 8, fuw_inductionExpected ? "Induction expected (midpoint)" : "Awaiting midpoint entry", text_color=#ffb347, text_size=size.small)
 
         // ── SECTION 7: THREAT MATRIX (bottom left) ──
         var table mosThr = table.new(position.bottom_left, 1, 3, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
