@@ -1,6 +1,6 @@
 //@version=6
 // ═══════════════════════════════════════════════════════════════════════════════
-// INVISIBLE NETWORK  (Engine 0 / 1A.13 / 2.0 / 3.0 CIN)  —  FU conversation graph
+// INVISIBLE NETWORK  (Engine 0 / 1A.13 / 2.0 / 3.0 CIN / WEB MODE 1.0)  —  FU graph
 // ───────────────────────────────────────────────────────────────────────────────
 // Price is not moving between swings or BOS — it moves between remembered
 // manipulations (validated FU candles). This indicator scans every timeframe
@@ -14,12 +14,14 @@ indicator("Invisible Network", overlay = true, max_lines_count = 500, max_labels
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string GRP = "Invisible Network"
+bool   webMode      = input.bool (true,  "WEB MODE (master) — map the network", group = GRP, tooltip = "Web Mode is purely informational. It observes the invisible network of FU/flip conversations and never alters detection. Turn off to hide the entire network overlay.")
 float  wickFrac     = input.float(0.4, "FU spike: min wick / range",        group = GRP, minval = 0.2, maxval = 0.9, step = 0.05)
 int    lookback     = input.int  (3,   "FU spike: structure lookback",      group = GRP, minval = 2, maxval = 30)
 int    authMin      = input.int  (45,  "Min node authority to show",        group = GRP, minval = 0, maxval = 120)
 int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
 int    nodeMax      = input.int  (64,  "Max remembered nodes",              group = GRP, minval = 10, maxval = 200)
 bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
+bool   showFlips    = input.bool (true,  "Show FLIP zones (Web 1.1)",       group = GRP)
 bool   tfColors     = input.bool (true,  "Color nodes by timeframe (Engine 2.8)", group = GRP)
 bool   showFEZ      = input.bool (true,  "Show FEZ corridor (Engine 2.5)",  group = GRP)
 bool   showCurPath  = input.bool (true,  "Show CURRENT path (forward route)",group = GRP)
@@ -247,6 +249,7 @@ f_pathNodes(bool _aheadSide) =>
 var array<line>  route_lines = array.new<line>()
 var array<line>  level_lines = array.new<line>()
 var array<label> level_lbls  = array.new<label>()
+var array<box>   flip_boxes  = array.new<box>()
 var label        route_lbl   = na
 var label        prev_lbl    = na
 var label        alt_lbl     = na
@@ -254,7 +257,10 @@ var box          fez_box     = na
 var label        fez_lbl     = na
 var table        netPanel    = na
 
-if barstate.islast
+// WEB MODE is a purely informational overlay layer that sits ABOVE detection:
+// the node registry / states are always maintained above; this block only
+// observes and renders. Turning Web Mode off hides the network, nothing else.
+if barstate.islast and webMode
     if array.size(route_lines) > 0
         for _i = 0 to array.size(route_lines) - 1
             line.delete(array.get(route_lines, _i))
@@ -267,6 +273,10 @@ if barstate.islast
         for _i = 0 to array.size(level_lbls) - 1
             label.delete(array.get(level_lbls, _i))
         array.clear(level_lbls)
+    if array.size(flip_boxes) > 0
+        for _i = 0 to array.size(flip_boxes) - 1
+            box.delete(array.get(flip_boxes, _i))
+        array.clear(flip_boxes)
     if not na(route_lbl)
         label.delete(route_lbl)
     if not na(prev_lbl)
@@ -312,6 +322,13 @@ if barstate.islast
                     color _c    = _st == 0 ? color.new(_base, 25) : color.new(_base, 70)
                     array.push(level_lines, line.new(bar_index - 1, _np, bar_index + 12, _np, color = _c, width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
                     array.push(level_lbls, label.new(bar_index + 12, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 20), textcolor = _st == 0 ? _base : color.gray, size = size.tiny))
+                // FLIP ZONE (Web 1.1) — the band each FU creates between its tip
+                // (spike) and midpoint; the flip is where price flips authority.
+                if showFlips
+                    float _fMid = array.get(nMid, _i)
+                    if not na(_fMid)
+                        color _fc = tfColors ? f_tfColor(_wt) : (_nd == 1 ? #00ffaa : #ff6600)
+                        array.push(flip_boxes, box.new(bar_index + 1, math.max(_np, _fMid), bar_index + 6, math.min(_np, _fMid), border_color = color.new(_fc, _st == 0 ? 45 : 75), border_width = 1, bgcolor = color.new(_fc, _st == 0 ? 86 : 93)))
                 _activeTotal += 1
                 if array.get(nWt, _i) >= 7
                     _objCnt += 1
@@ -517,3 +534,10 @@ if barstate.islast
             else
                 table.cell(netPanel, 0, 26 + _k, "—", text_color = color.gray, text_size = size.small)
                 table.cell(netPanel, 1, 26 + _k, "", text_color = color.gray, text_size = size.small)
+        // WEB INTEGRITY (Web 1.8) — node-completeness of the live network: how
+        // many structure classes (FU/flip · FEZ · objective · consumed memory)
+        // are actually populated. Low integrity = the network is sparse.
+        int    _webCov   = (_activeTotal > 0 ? 1 : 0) + (_fezCnt > 0 ? 1 : 0) + (_objCnt > 0 ? 1 : 0) + (_consumedCnt > 0 ? 1 : 0)
+        string _webInteg = _webCov >= 3 ? "HIGH" : _webCov == 2 ? "MED" : "LOW"
+        table.cell(netPanel, 0, 31, "WEB INTEGRITY", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 31, _webInteg + " (" + str.tostring(_webCov) + "/4)", text_color = _webCov >= 3 ? #5aff9e : _webCov == 2 ? color.yellow : #ff5a5a, text_size = size.small)
