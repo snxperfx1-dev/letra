@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 25", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 26", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3371,6 +3371,7 @@ if _fuN3 > 0
 showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
 fuwMinWickFrac = input.float(0.5,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.3, maxval=0.9, step=0.05)
 fuwLookback    = input.int  (5,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
+showFUStruct   = input.bool (true, "Show FU Structure Panel (cross-TF, replaces Opportunity)", group=GRP_FUOB)
 
 var float fuw_tip      = na      // wick extreme (manipulation point)
 var float fuw_bodyHigh = na
@@ -3525,16 +3526,23 @@ f_fuPool(simple float _wickFrac) =>
         _mid := _tip + (_bL - _tip) * 0.50
         _bHi := _tip + (_bL - _tip) * 0.62
         _bLo := _tip + (_bL - _tip) * 0.38
-    [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0]
+    float _wkAtr = (_dir == -1 and not na(_tip)) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and not na(_tip)) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    // STRUCTURAL SCORE 0-100: break-confirm 30 + significance 25 + originated-
+    // from-liquidity 20 (always, it swept a high/low) + induction 15 + liq-wave 10.
+    float _score = (_valid ? 30.0 : 0.0) + math.min(25.0, _wkAtr * 15.0) + 20.0 + (_wkAtr > 1.0 ? 15.0 : 0.0) + (_wkAtr > 1.5 ? 10.0 : 0.0)
+    [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0, _tip, _score]
 
-[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
-[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid,  h4_fuTip,  h4_fuScore]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid,  h1_fuTip,  h1_fuScore]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid, m15_fuTip, m15_fuScore] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m5_fuPool,  m5_fuMid,  m5_fuBandHi,  m5_fuBandLo,  m5_fuDir,  m5_fuValid,  m5_fuTip,  m5_fuScore]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m3_fuPool,  m3_fuMid,  m3_fuBandHi,  m3_fuBandLo,  m3_fuDir,  m3_fuValid,  m3_fuTip,  m3_fuScore]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m1_fuPool,  m1_fuMid,  m1_fuBandHi,  m1_fuBandLo,  m1_fuDir,  m1_fuValid,  m1_fuTip,  m1_fuScore]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
 
-// Recursive alignment % (how many layers carry a live validated FU) and the
-// winning future-magnet target = the HIGHEST timeframe with a valid aligned FU.
-int   _fuActiveCnt   = (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (fuw_valid ? 1 : 0)
-float fu_recursiveAlign = _fuActiveCnt / 4.0 * 100.0
+// Recursive alignment % (how many of the six layers carry a live validated FU)
+// and the winning future-magnet target = the HIGHEST timeframe with a valid FU.
+int   _fuActiveCnt   = (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (nz(m5_fuValid) == 1 ? 1 : 0) + (nz(m3_fuValid) == 1 ? 1 : 0) + (nz(m1_fuValid) == 1 ? 1 : 0)
+float fu_recursiveAlign = _fuActiveCnt / 6.0 * 100.0
 float  fu_winTarget = na
 string fu_winSrc    = "-"
 float  fu_winBand   = na
@@ -5261,6 +5269,16 @@ dir_tf4_raw = request.security(syminfo.tickerid, mce_tf4, f_htfDir(open, high, l
 f_v72_px(float _v)  => na(_v) ? "–" : str.tostring(math.round_to_mintick(_v))
 f_v72_pct(float _v) => na(_v) ? "–" : str.tostring(math.round(_v)) + "%"
 f_v72_num(float _v, int _d) => na(_v) ? "–" : str.tostring(math.round(_v, _d))
+
+// FU coordinate-panel row writer (Engine 1A.8 cross-TF FU registry).
+f_fuCoordRow(table _t, int _r, string _tf, int _dir, int _valid, float _tip, float _mid, float _pool, float _score) =>
+    color _c = _valid != 1 ? color.new(color.gray, 30) : (_dir == 1 ? #5aff9e : #ff5a5a)
+    table.cell(_t, 0, _r, _tf,                                                  text_color=_c,          text_size=size.tiny)
+    table.cell(_t, 1, _r, _valid != 1 ? "—" : (_dir == 1 ? "Bull" : "Bear"),    text_color=_c,          text_size=size.tiny)
+    table.cell(_t, 2, _r, _valid != 1 ? "—" : f_v72_px(_tip),                   text_color=color.white, text_size=size.tiny)
+    table.cell(_t, 3, _r, _valid != 1 ? "—" : f_v72_px(_mid),                   text_color=color.white, text_size=size.tiny)
+    table.cell(_t, 4, _r, _valid != 1 ? "—" : f_v72_px(_pool),                  text_color=#ffd000,     text_size=size.tiny)
+    table.cell(_t, 5, _r, _valid != 1 ? "—" : str.tostring(math.round(_score)), text_color=#5ad1ff,     text_size=size.tiny)
 f_v72_actionCol(string _a) => _a == "Long" ? #00ff88 : _a == "Short" ? color.red : _a == "No Trade" ? color.maroon : color.gray
 f_v72_gradeCol(string _g)  => _g == "A+" ? #00ffcc : _g == "A" ? color.lime : _g == "B" ? color.yellow : _g == "C" ? color.orange : color.red
 f_v72_riskCol(string _r)   => _r == "LOW" ? color.lime : _r == "MEDIUM" ? color.yellow : color.red
@@ -5967,13 +5985,37 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosEng, 0, 3, "Flow  " + control_transfer, text_color=color.white, text_size=size.small)
         table.cell(mosEng, 0, 4, "State " + energy_state, text_color=(_rotCascade or _rotMature ? #5aff9e : #ffe05a), text_size=size.small)
 
-        // ── SECTION 6: OPPORTUNITY REACTOR (middle right) ──
-        var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
-        table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
-        table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
-        table.cell(mosRct, 0, 2, oppState, text_color=color.white, text_size=size.small)
-        table.cell(mosRct, 0, 3, "Quality " + tqe_grade, text_color=#5ad1ff, text_size=size.small)
-        table.cell(mosRct, 0, 4, _cmdOppClass, text_color=#9fb0d8, text_size=size.small)
+        // ── SECTION 6: FU STRUCTURE REGISTRY (middle right) — cross-TF FU memory ──
+        // Persistent registry: each TF's validated FU is held in f_fuPool var state
+        // and read here via request.security, so an H4/H1 FU stays visible while you
+        // sit on M1/M5. Toggle showFUStruct swaps it with the Opportunity Reactor.
+        if showFUStruct
+            var table mosFU = table.new(position.middle_right, 6, 8, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#ff2fd0, 35), frame_width=2, border_width=1)
+            table.cell(mosFU, 0, 0, "TF",   text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 1, 0, "Dir",  text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 2, 0, "Tip",  text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 3, 0, "50%",  text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 4, 0, "Pool", text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 5, 0, "Scr",  text_color=#ff7fe6, text_size=size.tiny)
+            f_fuCoordRow(mosFU, 1, "H4",  nz(h4_fuDir),  nz(h4_fuValid),  h4_fuTip,  h4_fuMid,  h4_fuPool,  nz(h4_fuScore))
+            f_fuCoordRow(mosFU, 2, "H1",  nz(h1_fuDir),  nz(h1_fuValid),  h1_fuTip,  h1_fuMid,  h1_fuPool,  nz(h1_fuScore))
+            f_fuCoordRow(mosFU, 3, "M15", nz(m15_fuDir), nz(m15_fuValid), m15_fuTip, m15_fuMid, m15_fuPool, nz(m15_fuScore))
+            f_fuCoordRow(mosFU, 4, "M5",  nz(m5_fuDir),  nz(m5_fuValid),  m5_fuTip,  m5_fuMid,  m5_fuPool,  nz(m5_fuScore))
+            f_fuCoordRow(mosFU, 5, "M3",  nz(m3_fuDir),  nz(m3_fuValid),  m3_fuTip,  m3_fuMid,  m3_fuPool,  nz(m3_fuScore))
+            f_fuCoordRow(mosFU, 6, "M1",  nz(m1_fuDir),  nz(m1_fuValid),  m1_fuTip,  m1_fuMid,  m1_fuPool,  nz(m1_fuScore))
+            table.cell(mosFU, 0, 7, "MAGNET", text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 1, 7, na(fu_winTarget) ? "—" : fu_winSrc, text_color=#ffd000, text_size=size.tiny)
+            table.cell(mosFU, 2, 7, na(fu_winTarget) ? "—" : f_v72_px(fu_winTarget), text_color=#ffd000, text_size=size.tiny)
+            table.cell(mosFU, 3, 7, "Align", text_color=#ff7fe6, text_size=size.tiny)
+            table.cell(mosFU, 4, 7, str.tostring(math.round(fu_recursiveAlign)) + "%", text_color=#5aff9e, text_size=size.tiny)
+            table.cell(mosFU, 5, 7, "", text_color=color.white, text_size=size.tiny)
+        else
+            var table mosRct = table.new(position.middle_right, 1, 5, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
+            table.cell(mosRct, 0, 0, "═══  OPPORTUNITY  ═══", text_color=#00e5ff, text_size=size.small)
+            table.cell(mosRct, 0, 1, f_mosBar(oppProgress), text_color=(oppProgress >= 60 ? #5aff9e : oppProgress >= 20 ? #ffe05a : color.gray), text_size=size.small)
+            table.cell(mosRct, 0, 2, oppState, text_color=color.white, text_size=size.small)
+            table.cell(mosRct, 0, 3, "Quality " + tqe_grade, text_color=#5ad1ff, text_size=size.small)
+            table.cell(mosRct, 0, 4, _cmdOppClass, text_color=#9fb0d8, text_size=size.small)
 
         // (Timeline now covered by the restored P3 dashboard at bottom_center)
 
