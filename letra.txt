@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 19", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 20", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3367,6 +3367,118 @@ if _fuN3 > 0
                 die_anyBullFUActive := true
             else
                 die_anyBearFUActive := true
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 1A.8 / 1A.9 — FU WICK CAPTURE AUTHORITY  (Relevant Structure Authority)
+// ───────────────────────────────────────────────────────────────────────────────
+// Sits ABOVE destination / target / induction / liquidation: the market is drawn
+// toward liquidity TRAPPED by a validated FU wick. A FU candle = a spike that
+// pierces a prior swing (steals liquidity), closes back inside ("the middle
+// finger"), and is later VALIDATED when price destroys the candle's OPPOSITE
+// extreme. The captured wick becomes a future MAGNET; its 38–62% midpoint is the
+// INDUCTION BAND (the default execution / early-trader trap region). Self-
+// contained, chart-timeframe, single live objects (no per-bar trail). Renders
+// FU / FU MID / MAGNET / INDUCTION BAND and exposes fuw_* for downstream engines.
+showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
+fuwMinWickFrac = input.float(0.5,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.3, maxval=0.9, step=0.05)
+
+var float fuw_tip      = na      // wick extreme (manipulation point)
+var float fuw_bodyHigh = na
+var float fuw_bodyLow  = na
+var float fuw_mid      = na      // 50% of captured wick
+var float fuw_mid38    = na
+var float fuw_mid62    = na
+var int   fuw_dir      = 0       // 1 = bull FU (lower spike), -1 = bear FU (upper spike)
+var float fuw_leftPool = na      // swept swing = trapped (captured) liquidity = future magnet
+var int   fuw_bar      = na
+var bool  fuw_valid    = false   // becomes true once the opposite extreme is destroyed
+var float fuw_strength = na
+
+// NEW CANDIDATE — a spike through the most recent opposing swing that closes back
+// inside it (currSwingHigh/Low are the last confirmed pivots = real prior structure).
+float _fuwRange    = math.max(high - low, 1e-10)
+bool  _fuwBearCand = not na(currSwingHigh) and high > currSwingHigh and close < currSwingHigh and (high - math.max(open, close)) / _fuwRange >= fuwMinWickFrac
+bool  _fuwBullCand = not na(currSwingLow)  and low  < currSwingLow  and close > currSwingLow  and (math.min(open, close) - low) / _fuwRange >= fuwMinWickFrac
+
+if _fuwBearCand
+    fuw_dir      := -1
+    fuw_tip      := high
+    fuw_bodyHigh := math.max(open, close)
+    fuw_bodyLow  := math.min(open, close)
+    fuw_mid      := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.50
+    fuw_mid38    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.38
+    fuw_mid62    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.62
+    fuw_leftPool := currSwingHigh
+    fuw_bar      := bar_index
+    fuw_valid    := false
+    fuw_strength := math.min(100.0, (fuw_tip - fuw_bodyHigh) / math.max(atr, 1e-10) * 40.0 + 40.0)
+else if _fuwBullCand
+    fuw_dir      := 1
+    fuw_tip      := low
+    fuw_bodyHigh := math.max(open, close)
+    fuw_bodyLow  := math.min(open, close)
+    fuw_mid      := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.50
+    fuw_mid38    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.38
+    fuw_mid62    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.62
+    fuw_leftPool := currSwingLow
+    fuw_bar      := bar_index
+    fuw_valid    := false
+    fuw_strength := math.min(100.0, (fuw_bodyLow - fuw_tip) / math.max(atr, 1e-10) * 40.0 + 40.0)
+
+// VALIDATION — later price DESTROYS the candle's opposite extreme (break-confirm).
+if not fuw_valid and fuw_dir == -1 and not na(fuw_bodyLow) and bar_index > nz(fuw_bar) and close < fuw_bodyLow
+    fuw_valid := true
+if not fuw_valid and fuw_dir ==  1 and not na(fuw_bodyHigh) and bar_index > nz(fuw_bar) and close > fuw_bodyHigh
+    fuw_valid := true
+
+// INDUCTION BAND = 38–62% of the captured wick. "Induction expected" when price
+// trades back into that band of a VALIDATED FU. futureMagnet = captured liquidity.
+float fuw_bandHi = (na(fuw_mid38) or na(fuw_mid62)) ? na : math.max(fuw_mid38, fuw_mid62)
+float fuw_bandLo = (na(fuw_mid38) or na(fuw_mid62)) ? na : math.min(fuw_mid38, fuw_mid62)
+bool  fuw_inductionExpected = fuw_valid and not na(fuw_bandHi) and close <= fuw_bandHi and close >= fuw_bandLo
+float fuw_futureMagnet      = fuw_valid ? fuw_leftPool : na
+
+// RENDER — single live objects (created once, then moved/updated). Not gated by
+// displayMode, so the FU authority is visible in Execution mode too.
+var box   fuw_bandBox = na
+var label fuw_lblFU   = na
+var label fuw_lblMid  = na
+var label fuw_lblMag  = na
+var label fuw_lblBand = na
+
+if showFUWick and fuw_valid and not na(fuw_tip) and not na(fuw_bandHi)
+    int   _fuwR    = bar_index + 12
+    float _fuwBand = (fuw_bandHi + fuw_bandLo) / 2.0
+    color _fuwCol  = fuw_dir == 1 ? #00ffaa : #ff6600
+    // Induction band box (mid38..mid62), extended to the right edge.
+    if na(fuw_bandBox)
+        fuw_bandBox := box.new(nz(fuw_bar, bar_index), fuw_bandHi, _fuwR, fuw_bandLo, bgcolor=color.new(color.yellow, 82), border_color=color.new(color.yellow, 35), border_width=1)
+    else
+        box.set_lefttop(fuw_bandBox, nz(fuw_bar, bar_index), fuw_bandHi)
+        box.set_rightbottom(fuw_bandBox, _fuwR, fuw_bandLo)
+    // FU label at the wick extreme (manipulation point).
+    if na(fuw_lblFU)
+        fuw_lblFU := label.new(nz(fuw_bar, bar_index), fuw_tip, "FU", style=fuw_dir == -1 ? label.style_label_down : label.style_label_up, color=color.new(_fuwCol, 20), textcolor=color.white, size=size.small)
+    else
+        label.set_xy(fuw_lblFU, nz(fuw_bar, bar_index), fuw_tip)
+        label.set_style(fuw_lblFU, fuw_dir == -1 ? label.style_label_down : label.style_label_up)
+        label.set_color(fuw_lblFU, color.new(_fuwCol, 20))
+    // FU MID label at midpoint.
+    if na(fuw_lblMid)
+        fuw_lblMid := label.new(_fuwR, fuw_mid, "FU MID", style=label.style_label_left, color=color.new(color.aqua, 25), textcolor=color.white, size=size.tiny)
+    else
+        label.set_xy(fuw_lblMid, _fuwR, fuw_mid)
+    // INDUCTION BAND label.
+    if na(fuw_lblBand)
+        fuw_lblBand := label.new(_fuwR, _fuwBand, "INDUCTION BAND", style=label.style_label_left, color=color.new(color.yellow, 15), textcolor=color.black, size=size.tiny)
+    else
+        label.set_xy(fuw_lblBand, _fuwR, _fuwBand)
+    // MAGNET label at captured left-liquidity pool (future target).
+    if not na(fuw_futureMagnet)
+        if na(fuw_lblMag)
+            fuw_lblMag := label.new(_fuwR, fuw_futureMagnet, "MAGNET", style=label.style_label_left, color=color.new(#ff00ff, 20), textcolor=color.white, size=size.tiny)
+        else
+            label.set_xy(fuw_lblMag, _fuwR, fuw_futureMagnet)
 
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
