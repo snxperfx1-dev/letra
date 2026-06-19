@@ -227,8 +227,8 @@ if array.size(nPx) > 0
             float _np  = array.get(nPx, _i)
             int   _nd  = array.get(nDir, _i)
             int   _age = bar_index - array.get(nBar, _i)
-            if (_nd == -1 ? high > _np : low < _np)
-                array.set(nState, _i, 2)                         // CONSUMED — price traded through it
+            if (_nd == -1 ? close > _np : close < _np)
+                array.set(nState, _i, 2)                         // CONSUMED — price CLOSED through it (survives wicks/sweeps)
             else
                 if math.abs(close - _np) < _atr * 0.25
                     array.set(nRev, _i, array.get(nRev, _i) + 1) // revisit (defense) raises authority
@@ -283,7 +283,10 @@ f_htfNode(bool _ahead, int _skip) =>
     float _rank = -1.0
     if array.size(nPx) > 0
         for _i = 0 to array.size(nPx) - 1
-            if _i != _skip and array.get(nState, _i) != 2
+            // include CONSUMED / historical nodes too — swept HTF structures are
+            // valid future objectives (re-tests), so the story links to all real
+            // higher-TF nodes, not just untouched ones.
+            if _i != _skip
                 float _np = array.get(nPx, _i)
                 bool  _onSide = netBias == -1 ? (_ahead ? _np < close : _np > close) : (_ahead ? _np > close : _np < close)
                 if _onSide
