@@ -25,10 +25,11 @@ bool   showPanel    = input.bool (true,  "Show conversation panel",         grou
 int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
 int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
 
-// ── HTF memory guard: never request a timeframe lower than the chart when the
-//    chart is above H1 (prevents intrabar memory blow-ups on Daily/Weekly). ──
-bool _htfGuard = timeframe.in_seconds() > 3600
-f_safeTF(simple string _tf) => _htfGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+// ── Always scan the real timeframe. The whole network must stay visible no
+//    matter which chart timeframe the user is on, so we NEVER clamp a lower TF
+//    up to the chart TF — every magnet (M1 → W) is detected and remembered on
+//    every chart. (Pass-through kept as a function so call sites are stable.) ──
+f_safeTF(simple string _tf) => _tf
 
 // ── FU pool detector (runs per requested timeframe) ──────────────────────────
 // FU = a spike through local structure (prior `_lb`-bar high/low) that closes
@@ -243,7 +244,7 @@ if barstate.islast
     if showRoute and netBias != 0 and _routeConf >= routeMinConf and array.size(nPx) > 0
         array<int> _ri = array.new_int()
         for _i = 0 to array.size(nPx) - 1
-            if array.get(nState, _i) == 0 and f_auth(_i) >= authMin and array.get(nDir, _i) == netBias and (netBias == 1 ? array.get(nPx, _i) > close : array.get(nPx, _i) < close)
+            if array.get(nState, _i) <= 1 and f_auth(_i) >= authMin and (netBias == 1 ? array.get(nPx, _i) > close : array.get(nPx, _i) < close)
                 array.push(_ri, _i)
         if array.size(_ri) > 1
             for _a = 1 to array.size(_ri) - 1
@@ -327,7 +328,8 @@ if barstate.islast
                 float _np   = array.get(nPx, _idx)
                 float _dATR = math.abs(close - _np) / math.max(_atr, 1e-10)
                 int   _rv   = array.get(nRev, _idx)
-                string _status = _dATR < 0.5 ? "ATTACKING" : _rv > 0 ? "RETURNING" : (_nd == netBias and netBias != 0) ? "ATTRACTING" : "OPPOSING"
+                bool  _ahead = netBias == 1 ? _np > close : _np < close
+                string _status = _dATR < 0.5 ? "ATTACKING" : _rv > 0 ? "RETURNING" : _ahead ? "ATTRACTING" : "BEHIND"
                 table.cell(netPanel, 0, 8 + _k, f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(_np)), text_color = _nd == 1 ? #5aff9e : #ff5a5a, text_size = size.small)
                 table.cell(netPanel, 1, 8 + _k, _status + "  " + str.tostring(_dATR, "#.#") + " ATR", text_color = color.white, text_size = size.small)
             else
