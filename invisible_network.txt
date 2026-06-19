@@ -31,48 +31,46 @@ bool _htfGuard = timeframe.in_seconds() > 3600
 f_safeTF(simple string _tf) => _htfGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
 
 // ── FU pool detector (runs per requested timeframe) ──────────────────────────
-// Validated FU = a spike through local structure (prior `_lb`-bar high/low) that
-// closes back inside ("the middle finger") and is later VALIDATED when price
-// destroys the candle's opposite extreme. Returns tip, midpoint, direction,
-// validity and an authority sub-score.
+// FU = a spike through local structure (prior `_lb`-bar high/low) that closes
+// back inside ("the middle finger"). The node EXISTS on formation (so detection
+// is reliable); a later close beyond the candle body "confirms" it and adds to
+// authority. Returns tip, midpoint, direction, present-flag and authority score.
 f_fuPool(simple float _wf, simple int _lb) =>
-    var float _tip   = na
-    var float _bH    = na
-    var float _bL    = na
-    var int   _dir   = 0
-    var bool  _valid = false
-    var int   _fbar  = na
+    var float _tip  = na
+    var float _bH   = na
+    var float _bL   = na
+    var float _mid  = na
+    var int   _dir  = 0
+    var bool  _have = false
+    var bool  _conf = false
     float _rng = math.max(high - low, 1e-10)
     float _pHi = ta.highest(high, _lb)[1]
     float _pLo = ta.lowest(low,  _lb)[1]
     bool  _bear = not na(_pHi) and high > _pHi and close < _pHi and (high - math.max(open, close)) / _rng >= _wf
     bool  _bull = not na(_pLo) and low  < _pLo and close > _pLo and (math.min(open, close) - low) / _rng >= _wf
     if _bear
-        _dir := -1
-        _tip := high
-        _bH  := math.max(open, close)
-        _bL  := math.min(open, close)
-        _fbar := bar_index
-        _valid := false
+        _dir  := -1
+        _tip  := high
+        _bH   := math.max(open, close)
+        _bL   := math.min(open, close)
+        _mid  := _bH + (_tip - _bH) * 0.5
+        _have := true
+        _conf := false
     else if _bull
-        _dir := 1
-        _tip := low
-        _bH  := math.max(open, close)
-        _bL  := math.min(open, close)
-        _fbar := bar_index
-        _valid := false
-    if not _valid and _dir == -1 and not na(_bL) and bar_index > nz(_fbar) and close < _bL
-        _valid := true
-    if not _valid and _dir ==  1 and not na(_bH) and bar_index > nz(_fbar) and close > _bH
-        _valid := true
-    float _mid = na
-    if _dir == -1 and not na(_tip)
-        _mid := _bH + (_tip - _bH) * 0.5
-    else if _dir == 1 and not na(_tip)
-        _mid := _tip + (_bL - _tip) * 0.5
-    float _wk = (_dir == -1 and not na(_tip)) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and not na(_tip)) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
-    float _score = (_valid ? 30.0 : 0.0) + math.min(25.0, _wk * 15.0) + 20.0 + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
-    [_valid ? _tip : na, _mid, _dir, _valid ? 1 : 0, _score]
+        _dir  := 1
+        _tip  := low
+        _bH   := math.max(open, close)
+        _bL   := math.min(open, close)
+        _mid  := _tip + (_bL - _tip) * 0.5
+        _have := true
+        _conf := false
+    if _have and _dir == -1 and not _conf and close < _bL
+        _conf := true
+    if _have and _dir ==  1 and not _conf and close > _bH
+        _conf := true
+    float _wk = (_dir == -1 and _have) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and _have) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    float _score = 20.0 + math.min(25.0, _wk * 15.0) + (_conf ? 30.0 : 0.0) + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
+    [_have ? _tip : na, _mid, _dir, _have ? 1 : 0, _score]
 
 // ── Scan all eight timeframes ────────────────────────────────────────────────
 [wTip,   wMid,   wDir,   wV,   wSc]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)

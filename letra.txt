@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 35", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 36", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3492,7 +3492,7 @@ f_fuPool(simple float _wickFrac) =>
     var int   _dir   = 0
     var float _pool  = na
     var bool  _valid = false
-    var int   _fbar  = na
+    var bool  _conf  = false
     float _rng  = math.max(high - low, 1e-10)
     float _priorHi = ta.highest(high, 3)[1]
     float _priorLo = ta.lowest(low,  3)[1]
@@ -3504,20 +3504,20 @@ f_fuPool(simple float _wickFrac) =>
         _bH  := math.max(open, close)
         _bL  := math.min(open, close)
         _pool := _priorHi
-        _fbar := bar_index
-        _valid := false
+        _valid := true
+        _conf := false
     else if _bull
         _dir := 1
         _tip := low
         _bH  := math.max(open, close)
         _bL  := math.min(open, close)
         _pool := _priorLo
-        _fbar := bar_index
-        _valid := false
-    if not _valid and _dir == -1 and not na(_bL) and bar_index > nz(_fbar) and close < _bL
         _valid := true
-    if not _valid and _dir ==  1 and not na(_bH) and bar_index > nz(_fbar) and close > _bH
-        _valid := true
+        _conf := false
+    if _valid and _dir == -1 and not _conf and close < _bL
+        _conf := true
+    if _valid and _dir ==  1 and not _conf and close > _bH
+        _conf := true
     float _mid = na
     float _bHi = na
     float _bLo = na
@@ -3532,7 +3532,7 @@ f_fuPool(simple float _wickFrac) =>
     float _wkAtr = (_dir == -1 and not na(_tip)) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and not na(_tip)) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
     // STRUCTURAL SCORE 0-100: break-confirm 30 + significance 25 + originated-
     // from-liquidity 20 (always, it swept a high/low) + induction 15 + liq-wave 10.
-    float _score = (_valid ? 30.0 : 0.0) + math.min(25.0, _wkAtr * 15.0) + 20.0 + (_wkAtr > 1.0 ? 15.0 : 0.0) + (_wkAtr > 1.5 ? 10.0 : 0.0)
+    float _score = (_conf ? 30.0 : 0.0) + math.min(25.0, _wkAtr * 15.0) + 20.0 + (_wkAtr > 1.0 ? 15.0 : 0.0) + (_wkAtr > 1.5 ? 10.0 : 0.0)
     [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0, _tip, _score]
 
 [h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid,  h4_fuTip,  h4_fuScore]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
