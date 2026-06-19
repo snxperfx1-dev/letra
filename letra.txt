@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 44", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 45", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3790,6 +3790,66 @@ if die_regionShow
 else if not na(die_regionLbl)
     label.delete(die_regionLbl)
     die_regionLbl := na
+
+// ── REGION HISTORY (v45 audit fix) ───────────────────────────────────────────
+// The live die_regionLbl above shows ONLY the current region (it floats at the
+// right edge and is overwritten each bar). That hid every past phase — the chart
+// appeared to only ever show the longest-lived state. This freezer lays down each
+// COMPLETED phase as a persistent, span-anchored box+label across the candles it
+// occupied, so Expansion / Pre-Convexity / Induction / Push / Displacement /
+// Terminal Liquidation / Objective Arrival all stay on the chart over their own
+// range. A debounce (dieRegConfirm bars) requires the new phase to HOLD before it
+// commits — this is what prevents the v18 bar-to-bar oscillation flood.
+var array<box>   die_rBoxes = array.new<box>()
+var array<label> die_rLbls  = array.new<label>()
+var string die_rPhase = ""
+var int    die_rStart = 0
+var float  die_rHi = na
+var float  die_rLo = na
+var color  die_rCol = color.gray
+var bool   die_rBig = false
+var bool   die_rVis = true
+var string die_rTxt = ""
+var string die_pPend = ""
+var int    die_pCnt = 0
+int dieRegConfirm = 2
+if showNarrative and direction != 0 and barstate.isconfirmed
+    string _rnow = currentDisplayPhase
+    if die_rPhase == ""
+        die_rPhase := _rnow
+        die_rStart := bar_index
+        die_rHi := high
+        die_rLo := low
+    else if _rnow != die_rPhase
+        if _rnow == die_pPend
+            die_pCnt := die_pCnt + 1
+        else
+            die_pPend := _rnow
+            die_pCnt := 1
+        if die_pCnt >= dieRegConfirm
+            if die_rVis and die_rTxt != ""
+                box _bx = box.new(die_rStart, die_rHi, bar_index, die_rLo, border_color=color.new(die_rCol, 50), border_width=1, bgcolor=f_zoneFill(color.new(die_rCol, 90)))
+                label _lb = label.new(math.round((die_rStart + bar_index) / 2.0), die_rHi, die_rTxt, style=label.style_label_down, color=color.new(die_rCol, die_rBig ? 18 : 32), textcolor=color.white, size=die_rBig ? size.normal : size.small)
+                array.push(die_rBoxes, _bx)
+                array.push(die_rLbls, _lb)
+                if array.size(die_rBoxes) > 50
+                    box.delete(array.shift(die_rBoxes))
+                    label.delete(array.shift(die_rLbls))
+            die_rPhase := _rnow
+            die_rStart := bar_index
+            die_rHi := high
+            die_rLo := low
+            die_pPend := ""
+            die_pCnt := 0
+    else
+        die_pPend := ""
+        die_pCnt := 0
+    die_rCol := die_regionCol
+    die_rBig := die_regionBig
+    die_rVis := die_regionVisible
+    die_rTxt := die_regionTxt
+    die_rHi := math.max(nz(die_rHi, high), high)
+    die_rLo := math.min(nz(die_rLo, low), low)
 
 // ── DIE-7: ENTRY CYCLE CLUSTER TRACKING ──────────────────────────────────────
 var int   die_clusterCount     = 0
