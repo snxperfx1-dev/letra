@@ -30,6 +30,20 @@ bool   showStrat   = input.bool (true, "Show Chief Strategist panel", group = GR
 bool   showVerdict = input.bool (true, "Show verdict label",          group = GRP)
 int    minConf     = input.int  (55,  "Min confidence to ATTACK",     group = GRP, minval = 0, maxval = 100)
 int    pivLen      = input.int  (8,   "Wave pivot length",            group = GRP, minval = 2, maxval = 50)
+bool   showRegions = input.bool (true, "Show phase REGION labels",    group = GRP)
+int    regionConfirmBars = input.int(2, "Region confirm bars (debounce)", group = GRP, minval = 1, maxval = 10)
+
+// ── Letra engine inputs (exact f_phys / f_se parameters) ──────────────────────
+string GRPL = "Letra Engine (exact)"
+int    pivotLen       = input.int  (5,    "Pivot Length",              group = GRPL, minval = 2)
+int    atrLen         = input.int  (14,   "ATR Length",                group = GRPL, minval = 5)
+int    effLen         = input.int  (10,   "Efficiency Lookback",       group = GRPL, minval = 5)
+int    structLenL     = input.int  (10,   "Structure Pivot Length",    group = GRPL, minval = 3)
+float  impulseAtrMult = input.float(1.5,  "Impulse ATR Multiple",      group = GRPL, minval = 0.5, maxval = 5.0, step = 0.1)
+float  effThresh      = input.float(0.65, "Efficiency Threshold",      group = GRPL, minval = 0.3, maxval = 1.0, step = 0.05)
+float  dispThresh     = input.float(1.5,  "Displacement ATR Threshold",group = GRPL, minval = 0.5, maxval = 5.0, step = 0.1)
+float  convMult       = input.float(0.01, "Convexity ATR Multiplier",  group = GRPL, minval = 0.001, step = 0.001)
+float  chochBufferATR = input.float(0.75, "Direction CHoCH Buffer (ATR)", group = GRPL, minval = 0.0, maxval = 3.0, step = 0.05)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART A — INVISIBLE NETWORK ENGINE (embedded)
@@ -209,60 +223,466 @@ f_pathNodes(bool _aheadSide) =>
 f_cpNode(int _i) => _i < 0 ? "—" : f_wtTf(array.get(nWt, _i)) + " " + (array.get(nDir, _i) == 1 ? "▲" : "▼") + " " + str.tostring(math.round_to_mintick(array.get(nPx, _i)))
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PART B — LETRA SIGNAL LAYER (reconstructed internally)
-//   waveDir : execution direction = price vs its 50-EMA structure
-//   stackDir / stackPct : HTF alignment from the per-timeframe FU directions
+// PART B — LETRA ENGINE (EXACT PORT — not reconstructed)
+//   Verbatim Letra core: f_phys physics + f_se fixed-TF structure engine (the
+//   sole lifecycle authority) instantiated on M1/M3/M5/M15/H1/H4, the canonical
+//   phase strings, Engine 1A (ie1a_currentPhase = M5 canonical phase), the EDE /
+//   RE / EAE energy-resolution framework, and the Engine-1A.7 liquidation-wave
+//   overlay that produces the single authority string `currentDisplayPhase`.
+//   Wave PROGRESS, convexity, flip-zone, point4 and target all come straight from
+//   f_se's own exports (se5_wp / se5_cm / se5_ft / se5_fb / se5_p4* / se5_tgt) —
+//   so every phase the chart shows is the engine's real read, not an estimate.
 // ═══════════════════════════════════════════════════════════════════════════════
-int waveDir = close > _ema50 ? 1 : close < _ema50 ? -1 : 0
-int _sb = (nz(mnDir) == 1 ? 1 : 0) + (nz(wDir) == 1 ? 1 : 0) + (nz(dDir) == 1 ? 1 : 0) + (nz(h4Dir) == 1 ? 1 : 0) + (nz(h1Dir) == 1 ? 1 : 0) + (nz(m15Dir) == 1 ? 1 : 0) + (nz(m5Dir) == 1 ? 1 : 0)
-int _sbear = (nz(mnDir) == -1 ? 1 : 0) + (nz(wDir) == -1 ? 1 : 0) + (nz(dDir) == -1 ? 1 : 0) + (nz(h4Dir) == -1 ? 1 : 0) + (nz(h1Dir) == -1 ? 1 : 0) + (nz(m15Dir) == -1 ? 1 : 0) + (nz(m5Dir) == -1 ? 1 : 0)
-int   stackDir = _sb > _sbear ? 1 : _sbear > _sb ? -1 : 0
-float stackPct = math.max(_sb, _sbear) / 7.0 * 100.0
+bool _ltfGuard = timeframe.in_seconds() > 3600
+f_ltf(simple string _tf) => _ltfGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+// ── CORE PHYSICS (M5) — verbatim f_phys ───────────────────────────────────────
+f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dispT, simple float _convM) =>
+    float _atr = ta.atr(_atrL)
+    float _vel = ta.ema(close - close[1], 3)
+    float _acc = _vel - _vel[1]
+    float _cvx = _acc - _acc[1]
+    float _csm = ta.ema(_cvx, 3)
+    float _mv  = math.abs(close - close[_effL])
+    float _ps  = math.sum(math.abs(close - close[1]), _effL)
+    float _eff = _ps > 0 ? _mv / _ps : 0.0
+    float _dsp = (high - low) / math.max(_atr, 1e-10)
+    float _cth = _atr * _convM
+    bool  _bImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _dsp > _dispT
+    bool  _rImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _dsp > _dispT
+    bool  _bDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _rDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+    bool  _vd70 = math.abs(_vel) < math.abs(_vel[1]) * 0.7
+    bool  _vd50 = math.abs(_vel) < math.abs(_vel[1]) * 0.5
+    [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bImp, _rImp, _bDec, _rDec, _vd70, _vd50]
+
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, phys_vd70, phys_vd50] = request.security(syminfo.tickerid, f_ltf("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead = barmerge.lookahead_off)
+
+// ── FIXED-TF STRUCTURE ENGINE — verbatim f_se (sole lifecycle authority) ──────
+f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT, simple float _dispT, simple float _convM, simple float _impM, simple float _chBuf, simple int _effL) =>
+    float _atr  = ta.atr(_atrL)
+    float _vel  = ta.ema(close - close[1], 3)
+    float _acc  = _vel - _vel[1]
+    float _conv = _acc - _acc[1]
+    float _csm  = ta.ema(_conv, 3)
+    float _mv   = math.abs(close - close[_effL])
+    float _ps   = math.sum(math.abs(close - close[1]), _effL)
+    float _eff  = _ps > 0 ? _mv / _ps : 0.0
+    float _disp = (high - low) / math.max(_atr, 1e-10)
+    bool  _bullImp = _eff > _effT and _vel > _vel[1] and _acc > 0 and close > open and _disp > _dispT
+    bool  _bearImp = _eff > _effT and _vel < _vel[1] and _acc < 0 and close < open and _disp > _dispT
+    bool  _bullDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel > 0
+    bool  _bearDec = math.abs(_acc) < math.abs(_acc[1]) * 0.8 and _vel < 0
+    float _pH = ta.pivothigh(high, _pvLen, _pvLen)
+    float _pL = ta.pivotlow (low,  _pvLen, _pvLen)
+    var float _curSH = na
+    var float _curSL = na
+    var float _prSH  = na
+    var float _prSL  = na
+    if not na(_pH)
+        _prSH := na(_curSH) ? _pH : _curSH
+        _curSH := _pH
+    if not na(_pL)
+        _prSL := na(_curSL) ? _pL : _curSL
+        _curSL := _pL
+    var float _lastP = na
+    var int   _lastD = 0
+    var float _prevP = na
+    var int   _prevD = 0
+    float _eP = na
+    int   _eD = 0
+    if not na(_pH)
+        _eP := _pH
+        _eD := 1
+    else if not na(_pL)
+        _eP := _pL
+        _eD := -1
+    if _eD != 0
+        _prevP := _lastP
+        _prevD := _lastD
+        _lastP := _eP
+        _lastD := _eD
+    bool _bullBOS = not na(_prSH) and close > _prSH
+    bool _bearBOS = not na(_prSL) and close < _prSL
+    bool _bullCH  = not na(_prSH) and close > _prSH + _atr * _chBuf
+    bool _bearCH  = not na(_prSL) and close < _prSL - _atr * _chBuf
+    bool _eLong  = not na(_pH) and _prevD == -1 and (_pH - _prevP) > _atr * _impM
+    bool _eShort = not na(_pL) and _prevD == 1  and (_prevP - _pL) > _atr * _impM
+    var int   _dir   = 0
+    var float _ft    = na
+    var float _fb    = na
+    var float _p4h   = na
+    var float _p4l   = na
+    var float _inv   = na
+    var float _tgt   = na
+    var float _cycH  = na
+    var float _cycL  = na
+    bool _hasCtx = _dir != 0 and not na(_ft)
+    bool _flipDn = _dir == 1  and _bearCH
+    bool _flipUp = _dir == -1 and _bullCH
+    bool _isRev  = (_eLong and _dir == -1) or (_eShort and _dir == 1) or _flipUp or _flipDn
+    bool _spawn  = (_eLong or _eShort or _flipUp or _flipDn) and (not _hasCtx or _isRev)
+    if _spawn
+        int   _nd   = _eLong ? 1 : _eShort ? -1 : _flipUp ? 1 : -1
+        float _obT  = _nd == 1 ? _lastP : _prevP
+        float _obB  = _nd == 1 ? _prevP : _lastP
+        _dir := _nd
+        _ft  := _obT
+        _fb  := _obB
+        _p4h := _obT
+        _p4l := _obB
+        _cycH := high
+        _cycL := low
+        _inv := _nd == 1 ? _obB : _obT
+        float _rng = not na(_prSH) and not na(_prSL) ? math.abs(_prSH - _prSL) : _atr * 5.0
+        _tgt := _nd == 1 ? nz(_obT, close) + _rng : nz(_obB, close) - _rng
+    if _dir == 1
+        _cycH := na(_cycH) ? high : math.max(_cycH, high)
+    if _dir == -1
+        _cycL := na(_cycL) ? low : math.min(_cycL, low)
+    int _bosOut = _bullBOS ? 1 : _bearBOS ? -1 : 0
+    int _chOut  = _bullCH  ? 1 : _bearCH  ? -1 : 0
+    var bool  _bos1 = false
+    var bool  _bos2 = false
+    var float _protSw  = na
+    var float _protSw2 = na
+    var float _indOrig = na
+    var float _indExt  = na
+    var bool  _indBrk  = false
+    var int   _lastDirSeen = 0
+    bool _reset = _dir != _lastDirSeen
+    _lastDirSeen := _dir
+    if _reset
+        _bos1   := false
+        _bos2   := false
+        _protSw := na
+        _protSw2:= na
+        _indOrig:= na
+        _indExt := na
+        _indBrk := false
+    if _dir == 1 and not na(_pL)
+        _protSw2 := _protSw
+        _protSw  := _pL
+    if _dir == -1 and not na(_pH)
+        _protSw2 := _protSw
+        _protSw  := _pH
+    bool _oppBOS = (_dir == 1 and not na(_protSw) and close < _protSw) or (_dir == -1 and not na(_protSw) and close > _protSw)
+    if not _bos1 and _oppBOS
+        _bos1   := true
+        _indOrig := _dir == 1 ? nz(_cycH, high) : nz(_cycL, low)
+    if _bos1 and not _bos2 and _oppBOS and not na(_protSw2) and (_dir == 1 ? close < _protSw2 : close > _protSw2)
+        _bos2 := true
+    if _bos1 and _dir == 1
+        _indExt := na(_indExt) ? close : math.min(_indExt, close)
+    if _bos1 and _dir == -1
+        _indExt := na(_indExt) ? close : math.max(_indExt, close)
+    if _bos2 and not na(_indOrig)
+        if _dir == 1 and close > _indOrig
+            _indBrk := true
+        if _dir == -1 and close < _indOrig
+            _indBrk := true
+    float _convScore = math.min(math.abs(_csm) / math.max(_atr * _convM, 1e-10) * 50.0, 100.0)
+    float _expScore  = math.min(_eff / math.max(_effT, 1e-10) * 50.0 + _disp / math.max(_dispT, 1e-10) * 50.0, 100.0)
+    float _absScore  = (_eff < _effT * 0.7 and math.abs(_vel) < math.abs(_vel[1]) * 0.6) ? 60.0 + _convScore * 0.4 : _convScore * 0.3
+    bool  _momExpStrong = _eff > _effT * 0.75 and (_dir == 1 ? _vel > 0 : _vel < 0)
+    bool  _momDecaying  = _dir == 1 ? _bullDec : _bearDec
+    bool  _momCounter   = _dir == 1 ? _bearImp : _bullImp
+    bool  _momExhaust   = _eff < _effT * 0.65 and _absScore > 40.0
+    bool  _physConvexDevel = _convScore > 35.0
+    bool  _physTransfer    = _convScore > 48.0 or _absScore > 40.0
+    bool  _physCapacityLow = _absScore > 45.0 or _eff < _effT * 0.6
+    var int _phaseState = 0
+    if _reset
+        _phaseState := 0
+    if _dir != 0
+        bool _expanding = _momExpStrong or _eLong or _eShort or (_dir == 1 ? _bullImp : _bearImp)
+        if _phaseState < 1 and _expanding and not _physTransfer and not _physCapacityLow
+            _phaseState := 1
+        if _phaseState < 2 and _bos1 and _momDecaying and _physConvexDevel
+            _phaseState := 2
+        if _phaseState < 3 and _bos1 and _momCounter and _physTransfer
+            _phaseState := 3
+        if _phaseState < 4 and _bos2 and (_momDecaying or _momCounter) and _physTransfer
+            _phaseState := 4
+        if _phaseState < 5 and _indBrk and _momExpStrong and not _physCapacityLow
+            _phaseState := 5
+        if _phaseState >= 5 and _momExhaust and _physCapacityLow
+            _phaseState := 7
+        if _phaseState >= 5 and _momCounter and not _momExhaust and _physTransfer
+            _phaseState := 8
+    int _phase = _phaseState
+    if _dir != 0
+        _phase := _momExhaust and _physCapacityLow ? 7 :
+                  _momCounter and _physTransfer    ? (_phaseState >= 5 ? (_convScore > 40.0 ? 10 : _momDecaying ? 9 : 8) : (_bos2 ? 4 : 3)) :
+                  _momExpStrong ? (_phaseState >= 5 ? _phaseState : (_bos2 and _physTransfer) ? 4 : (_bos1 and _physConvexDevel) ? 2 : 1) :
+                  _momDecaying  ? (_phaseState >= 5 ? _phaseState : 4) :
+                  _phaseState == 0 ? 1 :
+                  _phaseState
+    if _phase == 5 and _dir == -1
+        _phase := 6
+    float _wp = _phaseState == 0 ? 10.0 : _phaseState == 1 ? 25.0 : _phaseState == 2 ? 40.0 : _phaseState == 3 ? 55.0 : _phaseState == 4 ? 68.0 : _phaseState == 5 ? 80.0 : _phaseState == 7 ? 92.0 : 85.0
+    float _cm = math.min(_convScore, 100.0)
+    float _mf = math.min(math.max(_expScore, math.max(_absScore, _convScore)) * 0.70 + (_dir != 0 ? 30.0 : 0.0), 100.0)
+    float _frzS = math.min((_eLong or _eShort ? 50.0 : 0.0) + _expScore * 0.30 + _convScore * 0.20, 100.0)
+    int _dirLabel = not na(_inv) ? (close > _inv ? 1 : close < _inv ? -1 : _dir) : _dir
+    [_dirLabel, _phase, _curSH, _curSL, _prSH, _prSL, _bosOut, _chOut, _p4h, _p4l, _inv, _tgt, _ft, _fb, _frzS, _wp, _cm, _mf]
+
+f_phaseStr(int _c) =>
+     _c == 1  ? "Expansion"                 :
+     _c == 2  ? "Expansion Pre-Convexity"   :
+     _c == 3  ? "Expansion Induction"       :
+     _c == 4  ? "Expansion Liquidity"       :
+     _c == 5  ? "New High"                  :
+     _c == 6  ? "New Low"                   :
+     _c == 7  ? "Absorption"                :
+     _c == 8  ? "Retracement"               :
+     _c == 9  ? "Retracement Pre-Convexity" :
+     _c == 10 ? "Retracement Induction"     :
+     _c == 11 ? "Retracement Liquidity"     :
+     _c == 12 ? "Demand Return"             :
+     _c == 13 ? "Supply Return"             : "Point 4 Origin"
+
+// Fixed-TF engine instances — one request.security per fixed timeframe.
+[se1_dir, se1_ph, se1_sh, se1_sl, se1_psh, se1_psl, se1_bos, se1_ch, se1_p4h, se1_p4l, se1_inv, se1_tgt, se1_ft, se1_fb, se1_fs, se1_wp, se1_cm, se1_mf] = request.security(syminfo.tickerid, f_ltf("1"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+[se3_dir, se3_ph, se3_sh, se3_sl, se3_psh, se3_psl, se3_bos, se3_ch, se3_p4h, se3_p4l, se3_inv, se3_tgt, se3_ft, se3_fb, se3_fs, se3_wp, se3_cm, se3_mf] = request.security(syminfo.tickerid, f_ltf("3"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+[se5_dir, se5_ph, se5_sh, se5_sl, se5_psh, se5_psl, se5_bos, se5_ch, se5_p4h, se5_p4l, se5_inv, se5_tgt, se5_ft, se5_fb, se5_fs, se5_wp, se5_cm, se5_mf] = request.security(syminfo.tickerid, f_ltf("5"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+[se15_dir, se15_ph, se15_sh, se15_sl, se15_psh, se15_psl, se15_bos, se15_ch, se15_p4h, se15_p4l, se15_inv, se15_tgt, se15_ft, se15_fb, se15_fs, se15_wp, se15_cm, se15_mf] = request.security(syminfo.tickerid, f_ltf("15"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+[se60_dir, se60_ph, se60_sh, se60_sl, se60_psh, se60_psl, se60_bos, se60_ch, se60_p4h, se60_p4l, se60_inv, se60_tgt, se60_ft, se60_fb, se60_fs, se60_wp, se60_cm, se60_mf] = request.security(syminfo.tickerid, f_ltf("60"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+[se240_dir, se240_ph, se240_sh, se240_sl, se240_psh, se240_psl, se240_bos, se240_ch, se240_p4h, se240_p4l, se240_inv, se240_tgt, se240_ft, se240_fb, se240_fs, se240_wp, se240_cm, se240_mf] = request.security(syminfo.tickerid, f_ltf("240"), f_se(pivotLen, structLenL, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead = barmerge.lookahead_off)
+
+string l0_phaseCanon = f_phaseStr(int(nz(se5_ph)))
+f_waveDirByOrigin(float _origin, int _fallbackDir) => not na(_origin) ? (close > _origin ? 1 : close < _origin ? -1 : _fallbackDir) : _fallbackDir
+int m1_dir = f_waveDirByOrigin(se1_inv,   int(nz(se1_dir)))
+int l3_dir = f_waveDirByOrigin(se3_inv,   int(nz(se3_dir)))
+int l0_dir = f_waveDirByOrigin(se5_inv,   int(nz(se5_dir)))
+int l1_dir = f_waveDirByOrigin(se15_inv,  int(nz(se15_dir)))
+int l2_dir = f_waveDirByOrigin(se60_inv,  int(nz(se60_dir)))
+int l4_dir = f_waveDirByOrigin(se240_inv, int(nz(se240_dir)))
+
+// ── FRACTAL STACK ALIGNMENT (exact) ──────────────────────────────────────────
+int _stackBull = (m1_dir == 1 ? 1 : 0) + (l3_dir == 1 ? 1 : 0) + (l0_dir == 1 ? 1 : 0) + (l1_dir == 1 ? 1 : 0) + (l2_dir == 1 ? 1 : 0) + (l4_dir == 1 ? 1 : 0)
+int _stackBear = (m1_dir == -1 ? 1 : 0) + (l3_dir == -1 ? 1 : 0) + (l0_dir == -1 ? 1 : 0) + (l1_dir == -1 ? 1 : 0) + (l2_dir == -1 ? 1 : 0) + (l4_dir == -1 ? 1 : 0)
+int   fractalStackDir   = _stackBull > _stackBear ? 1 : _stackBear > _stackBull ? -1 : 0
+float fractalStackScore = math.max(_stackBull, _stackBear) / 6.0 * 100.0
+
+// ── PHYSICS OBSERVATION LAYER (Section 9 — exact) ─────────────────────────────
+float velocityScore     = math.min(math.abs(velocity)     / math.max(atr * 0.1, 1e-10) * 50.0, 100.0)
+float accelerationScore = math.min(math.abs(acceleration) / math.max(atr * 0.05,1e-10) * 50.0, 100.0)
+float convexityScore    = math.min(math.abs(convSmooth)   / math.max(atr * convMult, 1e-10) * 25.0, 100.0)
+float obs_ExpansionScore  = math.min((efficiency > effThresh ? efficiency * 60.0 : efficiency * 30.0) + (displacement > dispThresh ? (displacement / math.max(dispThresh, 1e-10) - 1.0) * 20.0 : 0.0) + (velocity > 0 and acceleration > 0 ? velocityScore * 0.2 : velocity < 0 and acceleration < 0 ? velocityScore * 0.2 : 0.0), 100.0)
+float obs_DecayScore      = math.min((bullMomDecay or bearMomDecay ? 40.0 : 0.0) + (convexityScore > 30 ? convexityScore * 0.5 : 0.0) + (phys_vd70 ? 30.0 : 0.0), 100.0)
+float obs_CurvatureScore  = convexityScore
+float obs_AbsorptionScore = math.min((efficiency < effThresh * 0.7 ? (1.0 - efficiency / math.max(effThresh, 1e-10)) * 50.0 : 0.0) + (phys_vd50 ? 30.0 : 0.0) + (displacement < dispThresh * 0.5 ? 20.0 : 0.0), 100.0)
+float obs_LiquidityScore  = math.min(obs_DecayScore * 0.4 + obs_CurvatureScore * 0.4 + (displacement > dispThresh * 1.2 and (bullMomDecay or bearMomDecay) ? 20.0 : 0.0), 100.0)
+
+// ── ENGINE 1A — sole lifecycle authority (M5 canonical phase) ─────────────────
+string ie1a_currentPhase    = l0_phaseCanon
+float  ie1a_phaseConfidence = math.max(20.0, math.min(100.0, fractalStackScore * 0.50 + nz(se5_mf) * 0.30 + nz(se5_wp) * 0.20))
+
+// ── Engine objects sourced straight from the M5 (L0) f_se structure export ────
+int    direction          = l0_dir
+int    displayWaveDir_M5   = l0_dir
+float  flipTop            = se5_ft
+float  flipBot            = se5_fb
+float  point4OriginHigh    = se5_p4h
+float  point4OriginLow     = se5_p4l
+float  inducZoneHigh       = na
+float  inducZoneLow        = na
+bool   bullBOS             = nz(se5_bos) == 1
+bool   bearBOS             = nz(se5_bos) == -1
+float  convexityMaturity   = nz(se5_cm)
+var float cycleHigh = na
+var float cycleLow  = na
+var int  _l0DirPrev = 0
+if l0_dir != _l0DirPrev
+    cycleHigh := high
+    cycleLow  := low
+    _l0DirPrev := l0_dir
+cycleHigh := na(cycleHigh) ? high : math.max(cycleHigh, high)
+cycleLow  := na(cycleLow)  ? low  : math.min(cycleLow,  low)
+
+// ── ENERGY DISSIPATION ENGINE (EDE — exact) ───────────────────────────────────
+int ede_state =
+     l0_phaseCanon == "Point 4 Origin"            ? 1 :
+     l0_phaseCanon == "Expansion"                 ? 1 :
+     l0_phaseCanon == "Expansion Pre-Convexity"   ? 2 :
+     l0_phaseCanon == "Expansion Induction"       ? 3 :
+     l0_phaseCanon == "Expansion Liquidity"       ? 4 :
+     l0_phaseCanon == "New High"                  ? 5 :
+     l0_phaseCanon == "New Low"                   ? 5 : 6
+float ede_expansionEnergy = math.min(obs_ExpansionScore * 0.50 + (bullImpulse or bearImpulse ? 30.0 : 0.0) + (efficiency * 20.0), 100.0)
+float ede_dissipatedEnergy = math.min((ede_state >= 2 ? obs_DecayScore * 0.40 : 0.0) + (ede_state >= 3 ? obs_CurvatureScore * 0.30 : 0.0) + (ede_state >= 4 ? obs_LiquidityScore * 0.30 : 0.0), 100.0)
+float ede_dissipationProgress = math.min((ede_state >= 2 ? 25.0 : 0.0) + (ede_state >= 3 ? 25.0 : 0.0) + (ede_state >= 4 ? 25.0 : 0.0) + (ede_state >= 5 ? 25.0 : 0.0), 100.0)
+
+// ── RESOLUTION ENGINE (RE — recursive cycles simplified to a 2-cycle model) ───
+int re_expectedCycles  = 2
+int re_completedCycles = ede_state >= 5 ? 1 : 0
+float re_recursiveCompletionScore = float(re_completedCycles) / float(re_expectedCycles) * 100.0
+float re_residualEnergy = math.max(0.0, ede_expansionEnergy - ede_dissipatedEnergy)
+bool re_objectiveReached = ede_state >= 5
+bool re_fullDissipation  = ede_dissipationProgress >= 75.0
+float re_dissipationProgress = ede_dissipationProgress
+bool recursiveComplete = false
+bool re_absorbedAndReturned = (ie1a_currentPhase == "Demand Return" or ie1a_currentPhase == "Supply Return") and recursiveComplete
+string re_resolutionState =
+     re_absorbedAndReturned and re_fullDissipation and re_recursiveCompletionScore >= 75.0 ? "RESOLVED" :
+     re_objectiveReached and re_dissipationProgress >= 50.0 ? "PARTIALLY RESOLVED" : "UNRESOLVED"
+float re_residualEnergyScore = math.min(re_residualEnergy, 100.0)
+
+// ── ENERGY ATTRACTOR ENGINE (EAE — exact, fed by f_se flip-zone / origin) ─────
+float eae_primaryAttractorPrice =
+     direction == 0 ? na :
+     re_resolutionState == "UNRESOLVED" ? (direction == 1 ? nz(flipBot, close - atr * 2.0) : nz(flipTop, close + atr * 2.0)) :
+     re_resolutionState == "PARTIALLY RESOLVED" ? (direction == 1 ? nz(point4OriginLow, close - atr) : nz(point4OriginHigh, close + atr)) : na
+float eae_primaryAttractorScore = math.min(re_residualEnergyScore * 0.40 + (re_resolutionState == "UNRESOLVED" ? 30.0 : re_resolutionState == "PARTIALLY RESOLVED" ? 20.0 : 5.0) + (not na(eae_primaryAttractorPrice) ? math.max(0.0, 30.0 - math.abs(close - eae_primaryAttractorPrice) / math.max(atr, 1e-10) * 5.0) : 0.0), 100.0)
+string eae_primaryAttractorLabel = re_resolutionState == "UNRESOLVED" ? "Flip Zone (High Residual)" : re_resolutionState == "PARTIALLY RESOLVED" ? "Origin Zone (Partial)" : "No Active Attractor"
+
+// ── ENGINE 1A.7 — PRE-OBJECTIVE LIQUIDATION WAVE (verbatim display authority) ──
+var bool   liqg_active   = false
+var bool   liqg_isRetr   = false
+var int    liqg_dir      = 0
+var float  liqg_target   = na
+var float  liqg_initDist = na
+bool   _liqgRetr = ie1a_currentPhase == "Retracement Induction"
+bool   _liqgArm  = ie1a_currentPhase == "Expansion Induction" or _liqgRetr
+float  _liqgObj  = se5_tgt
+if _liqgArm and not liqg_active and not na(_liqgObj)
+    liqg_active   := true
+    liqg_isRetr   := _liqgRetr
+    liqg_target   := _liqgObj
+    liqg_dir      := _liqgObj > close ? 1 : -1
+    liqg_initDist := math.max(math.abs(_liqgObj - close), atr * 0.5)
+if liqg_active and not na(_liqgObj)
+    liqg_target := _liqgObj
+float  _liqgRemain  = (liqg_active and not na(liqg_target)) ? math.abs(liqg_target - close) : na
+float  liqg_distPct = (liqg_active and not na(_liqgRemain)) ? math.min(100.0, _liqgRemain / math.max(liqg_initDist, 1e-10) * 100.0) : na
+bool   _liqgCapExh   = ede_dissipationProgress > 60 or convexityMaturity > 60
+bool   _liqgResolved = re_resolutionState == "RESOLVED"
+bool   _liqgEnergyLo = efficiency < effThresh * 0.7
+bool   _liqgMagnet   = liqg_active and not na(liqg_distPct) and liqg_distPct < 20
+bool   _liqgArrStruct = liqg_active and not na(liqg_target) and (liqg_dir == 1 ? close >= liqg_target : close <= liqg_target)
+bool   _liqgArrPhys   = _liqgCapExh and (_liqgResolved or _liqgMagnet)
+bool   liqg_objArrival = _liqgArrStruct and _liqgEnergyLo and _liqgArrPhys
+bool   _liqgCounterBOS = liqg_dir == 1 ? bearBOS : bullBOS
+bool   liqg_trueCHoCH  = liqg_objArrival and _liqgCounterBOS and _liqgEnergyLo and _liqgResolved
+string liqg_subPhase =
+     not liqg_active                                          ? "" :
+     liqg_objArrival                                          ? "Objective Arrival" :
+     (_liqgMagnet and _liqgEnergyLo)                          ? "Terminal Liquidation" :
+     (convexityMaturity > 40 or ede_dissipationProgress > 40) ? "Induction" :
+     (not na(liqg_distPct) and liqg_distPct < 70)             ? "Displacement" :
+     (not na(liqg_distPct) and liqg_distPct < 95)             ? "Push" : "Initialization"
+string liqg_title =
+     not liqg_active ? "" :
+     liqg_isRetr and displayWaveDir_M5 == -1 ? "Pre-Supply Return Liquidation Wave" :
+     liqg_isRetr                              ? "Pre-Demand Return Liquidation Wave" :
+     displayWaveDir_M5 == -1                  ? "Pre-New Low Liquidation Wave" : "Pre-New High Liquidation Wave"
+bool _liqgInWindow = ie1a_currentPhase == "Expansion Induction" or ie1a_currentPhase == "Expansion Liquidity" or ie1a_currentPhase == "Retracement Induction" or ie1a_currentPhase == "Retracement Liquidity"
+if liqg_active and (not _liqgInWindow or (liqg_objArrival and liqg_trueCHoCH))
+    liqg_active := false
+
+// ── SINGLE PHASE-STRING AUTHORITY — consumed by every label/panel/narrative ───
+string currentDisplayPhase = liqg_active ? (liqg_title + (liqg_subPhase != "" ? " • " + liqg_subPhase : "")) : ie1a_currentPhase
+string _cdpDir   = displayWaveDir_M5 == 1 ? "Bullish" : displayWaveDir_M5 == -1 ? "Bearish" : "Neutral"
+string liqg_arrTx = liqg_objArrival ? "Yes" : (not na(liqg_distPct) and liqg_distPct < 12) ? "Imminent" : "No"
+bool  _cdpSAgree = displayWaveDir_M5 != 0 and (displayWaveDir_M5 == 1 ? close > se5_inv : close < se5_inv)
+bool  _cdpMAgree = displayWaveDir_M5 != 0 and (displayWaveDir_M5 == 1 ? velocity > 0 : velocity < 0)
+bool  _cdpPAgree = re_resolutionState != "RESOLVED" and ede_dissipationProgress < 80
+float phaseConfidence = (_cdpSAgree ? 34.0 : 0.0) + (_cdpMAgree ? 33.0 : 0.0) + (_cdpPAgree ? 33.0 : 0.0)
+float phaseIntegrity  = math.max(0.0, math.min(100.0, phaseConfidence * 0.6 + (100.0 - math.min(ede_dissipationProgress, 100.0)) * 0.4))
+
+// ── Legacy aliases so the panels/Senseei layer read the EXACT engine outputs ──
+int    waveDir   = l0_dir
+int    stackDir  = fractalStackDir
+float  stackPct  = fractalStackScore
+float  waveOrigin = se5_inv
+float  waveObj    = nz(liqg_target, se5_tgt)
+float  waveProgress = nz(se5_wp, 30.0)
+string wavePhase  = currentDisplayPhase
+string waveDirLbl = waveDir == 1 ? "Bullish" : waveDir == -1 ? "Bearish" : "Neutral"
+string waveNarr   = _cdpDir + " wave · " + str.tostring(math.round(waveProgress)) + "% → " + (na(waveObj) ? "forming" : str.tostring(math.round_to_mintick(waveObj))) + " · " + currentDisplayPhase + "."
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PART B2 — WAVE LIFECYCLE (compact reconstruction of Letra's wave engine)
-//   Detects the wave from a swing ORIGIN, measures PROGRESS toward its objective,
-//   walks the canonical phases (Origin → Expansion → Pre-Convexity → Induction →
-//   Liquidation → Objective Arrival → Absorption) and builds the wave NARRATIVE.
+// REGION-BASED DISPLAY AUTHORITY  (audit fix)
+//   Every phase the engine emits is laid down as a PERSISTENT, span-anchored
+//   region (box + label across the candles it occupied) — not a single floating
+//   "current instant" label that gets overwritten each bar. A debounce
+//   (regionConfirmBars) requires a new phase to HOLD before it commits, which
+//   kills the bar-to-bar oscillation flood. Renders straight from the single
+//   authority string `currentDisplayPhase` — no second phase map anywhere.
 // ═══════════════════════════════════════════════════════════════════════════════
-float _ph = ta.pivothigh(pivLen, pivLen)
-float _pl = ta.pivotlow(pivLen, pivLen)
-var float swH = na
-var float swL = na
-var float pSwH = na
-var float pSwL = na
-if not na(_ph)
-    pSwH := na(swH) ? _ph : swH
-    swH := _ph
-if not na(_pl)
-    pSwL := na(swL) ? _pl : swL
-    swL := _pl
-float waveOrigin = waveDir == 1 ? swL : waveDir == -1 ? swH : na
-float waveObj = waveDir == 1 ? math.max(nz(swH, close), nz(pSwH, close)) : waveDir == -1 ? math.min(nz(swL, close), nz(pSwL, close)) : na
-float _span0 = na(waveOrigin) ? _atr * 5.0 : math.abs(close - waveOrigin)
-if waveDir == 1 and (na(waveObj) or waveObj <= close)
-    waveObj := close + math.max(_span0 * 0.5, _atr * 2.0)
-if waveDir == -1 and (na(waveObj) or waveObj >= close)
-    waveObj := close - math.max(_span0 * 0.5, _atr * 2.0)
-float waveProgress = (na(waveOrigin) or na(waveObj) or waveObj == waveOrigin) ? 0.0 : math.max(0.0, math.min(130.0, (close - waveOrigin) / (waveObj - waveOrigin) * 100.0))
-var float _woPrev = na
-var bool  inducHit = false
-var float waveExt = na
-if not na(waveOrigin) and waveOrigin != _woPrev
-    _woPrev := waveOrigin
-    inducHit := false
-    waveExt := close
-if waveDir == 1
-    waveExt := na(waveExt) ? high : math.max(waveExt, high)
-else if waveDir == -1
-    waveExt := na(waveExt) ? low : math.min(waveExt, low)
-float _pull = waveDir == 1 ? nz(waveExt, close) - close : waveDir == -1 ? close - nz(waveExt, close) : 0.0
-bool inducNow = _pull > _atr * 0.8 and waveProgress > 20.0
-if inducNow
-    inducHit := true
-string wavePhase = na(waveOrigin) ? "—" : (waveProgress >= 100.0 and _pull > _atr * 0.5) ? "Absorption" : waveProgress >= 95.0 ? "Objective Arrival" : inducNow ? "Induction" : (inducHit and waveProgress > 55.0) ? "Liquidation" : waveProgress >= 45.0 ? "Pre-Convexity" : waveProgress > 5.0 ? "Expansion" : "Origin"
-string waveDirLbl = waveDir == 1 ? "Bullish" : waveDir == -1 ? "Bearish" : "Neutral"
-string waveNarr = na(waveOrigin) ? "Wave forming — awaiting structure." : waveDirLbl + " wave · " + str.tostring(math.round(waveProgress)) + "% to objective " + str.tostring(math.round_to_mintick(waveObj)) + " · " + wavePhase + "."
+f_regCol(string _p) =>
+     str.contains(_p, "Liquidation Wave") ? color.orange :
+     str.contains(_p, "Induction")        ? #fbbf24 :
+     str.contains(_p, "Pre-Convexity")    ? #38bdf8 :
+     str.contains(_p, "Liquidity")        ? #a78bfa :
+     str.contains(_p, "Absorption")       ? #fb7185 :
+     str.contains(_p, "New High")         ? #34d399 :
+     str.contains(_p, "New Low")          ? #fb7185 :
+     str.contains(_p, "Expansion")        ? #34d399 :
+     (str.contains(_p, "Demand Return") or str.contains(_p, "Supply Return")) ? #fbbf24 : #94a3b8
+f_regTxt(string _p) => str.upper(str.replace_all(_p, " • ", "  —  "))
+
+var array<box>   _regBoxes = array.new<box>()
+var array<label> _regLbls  = array.new<label>()
+var string _regPhase = ""
+var int    _regStart = 0
+var float  _regHi = na
+var float  _regLo = na
+var string _pendPhase = ""
+var int    _pendCount = 0
+var box    _regLiveBox = na
+var label  _regLiveLbl = na
+
+if showRegions and barstate.isconfirmed
+    string _now = currentDisplayPhase
+    if _regPhase == ""
+        _regPhase := _now
+        _regStart := bar_index
+        _regHi := high
+        _regLo := low
+    else if _now != _regPhase
+        if _now == _pendPhase
+            _pendCount := _pendCount + 1
+        else
+            _pendPhase := _now
+            _pendCount := 1
+        if _pendCount >= regionConfirmBars
+            color _fc = f_regCol(_regPhase)
+            box _fbx = box.new(_regStart, nz(_regHi, high), bar_index, nz(_regLo, low), border_color = color.new(_fc, 45), border_width = 1, bgcolor = color.new(_fc, 89))
+            label _flb = label.new(math.round((_regStart + bar_index) / 2), nz(_regHi, high), f_regTxt(_regPhase), style = label.style_label_down, color = color.new(_fc, 22), textcolor = #0d1117, size = size.small)
+            array.push(_regBoxes, _fbx)
+            array.push(_regLbls, _flb)
+            if array.size(_regBoxes) > 40
+                box.delete(array.shift(_regBoxes))
+                label.delete(array.shift(_regLbls))
+            _regPhase := _now
+            _regStart := bar_index
+            _regHi := high
+            _regLo := low
+            _pendPhase := ""
+            _pendCount := 0
+    else
+        _pendPhase := ""
+        _pendCount := 0
+    _regHi := math.max(nz(_regHi, high), high)
+    _regLo := math.min(nz(_regLo, low), low)
+
+if showRegions and barstate.islast and _regPhase != ""
+    color _lc = f_regCol(_regPhase)
+    float _lhi = math.max(nz(_regHi, high), high)
+    float _llo = math.min(nz(_regLo, low), low)
+    if na(_regLiveBox)
+        _regLiveBox := box.new(_regStart, _lhi, bar_index + 2, _llo, border_color = color.new(_lc, 25), border_width = 2, bgcolor = color.new(_lc, 82))
+        _regLiveLbl := label.new(bar_index + 2, _lhi, f_regTxt(_regPhase), style = label.style_label_left, color = color.new(_lc, 10), textcolor = #0d1117, size = size.normal)
+    else
+        box.set_lefttop(_regLiveBox, _regStart, _lhi)
+        box.set_rightbottom(_regLiveBox, bar_index + 2, _llo)
+        box.set_border_color(_regLiveBox, color.new(_lc, 25))
+        box.set_bgcolor(_regLiveBox, color.new(_lc, 82))
+        label.set_xy(_regLiveLbl, bar_index + 2, _lhi)
+        label.set_text(_regLiveLbl, f_regTxt(_regPhase))
+        label.set_color(_regLiveLbl, color.new(_lc, 10))
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE) — full 5-cycle stack + sub-engines
@@ -355,7 +775,7 @@ if _ctxSwHi
 if _ctxSwLo
     _ctxSweep := -1
 string ctxLiq    = _ctxSweep == 1 ? "BUY-SIDE SWEPT" : _ctxSweep == -1 ? "SELL-SIDE SWEPT" : "none"
-float  ctxDissip = math.min(100.0, waveProgress * 0.6 + (inducHit ? 30.0 : 0.0))
+float  ctxDissip = ede_dissipationProgress
 string ctxFusion = stackDir == 0 ? "Mixed" : stackDir == waveDir ? "HTF + LTF aligned" : "HTF intact · LTF counter"
 
 // ── Drawing objects + hoisted state for global alerts ────────────────────────
@@ -496,6 +916,10 @@ if barstate.islast
     float residual = 100.0 - completion
     int   resCode = completion >= 75.0 ? 2 : completion >= 40.0 ? 1 : 0
     float attractor = _attrIdx >= 0 ? math.min(100.0, f_auth(_attrIdx)) : 0.0
+    // EXACT Letra energy-resolution authority overrides the node-derived proxies
+    residual  := re_residualEnergyScore
+    resCode   := re_resolutionState == "RESOLVED" ? 2 : re_resolutionState == "PARTIALLY RESOLVED" ? 1 : 0
+    attractor := eae_primaryAttractorScore
     float pressure = (_bullAuth + _bearAuth) > 0 ? (_bullAuth - _bearAuth) / (_bullAuth + _bearAuth) * 100.0 : 0.0
     int   pdir = pressure > 12 ? 1 : pressure < -12 ? -1 : 0
 
@@ -514,8 +938,8 @@ if barstate.islast
     float conflict = _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
     float threat = math.max(0.0, math.min(100.0, conflict * 0.40 + residual * 0.28 + timeConflict * 0.12 + (pdir != 0 and pdir != master ? 18.0 : 0.0) + (resCode == 1 ? 10.0 : 0.0)))
     float confidence = math.max(0.0, math.min(100.0, alignment * 0.40 + timeAlign * 0.12 + stackPct * 0.18 + attractor * 0.15 + math.min(15.0, _eligN * 1.2) - threat * 0.20))
-    string timing = (wavePhase == "Absorption" or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
-    string intent = conflict > 55 ? "ABSORPTION" : wavePhase == "Expansion" ? "EXPANSION" : wavePhase == "Pre-Convexity" ? "CONTINUATION" : wavePhase == "Induction" ? "RESOLUTION" : wavePhase == "Liquidation" ? "DELIVERY" : wavePhase == "Objective Arrival" ? "DELIVERY" : wavePhase == "Absorption" ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
+    string timing = (str.contains(ie1a_currentPhase, "Absorption") or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
+    string intent = conflict > 55 ? "ABSORPTION" : liqg_active ? "DELIVERY" : (str.contains(ie1a_currentPhase, "Expansion") and not str.contains(ie1a_currentPhase, "Pre-Convexity") and not str.contains(ie1a_currentPhase, "Induction") and not str.contains(ie1a_currentPhase, "Liquidity")) ? "EXPANSION" : str.contains(ie1a_currentPhase, "Pre-Convexity") ? "CONTINUATION" : str.contains(ie1a_currentPhase, "Induction") ? "RESOLUTION" : str.contains(ie1a_currentPhase, "Liquidity") ? "DELIVERY" : (str.contains(ie1a_currentPhase, "New High") or str.contains(ie1a_currentPhase, "New Low")) ? "DELIVERY" : str.contains(ie1a_currentPhase, "Absorption") ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
     float oppScore = math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
     string opportunity = master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
     string action = master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : resCode == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
