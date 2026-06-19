@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 22", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 21", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -3563,23 +3563,18 @@ bool die_regionVisible =
 int  die_regionOpacity = str.contains(currentDisplayPhase, "Liquidation Wave") ? 10 : 20
 bool die_regionBig     = str.contains(currentDisplayPhase, "Liquidation Wave") or str.contains(currentDisplayPhase, "Induction") or str.contains(currentDisplayPhase, "Pre-Convexity")
 
-// PHASE LABELS — two complementary layers, both off the SAME authority:
-//   (1) a single LIVE label that floats on the current bar (instant readout); and
-//   (2) a PERSISTENT region trail — each confirmed phase region gets its OWN
-//       label (distinct text + colour), anchored at the bar the region started.
-// A region is committed only after its text holds for `regionConfirmBars`
-// consecutive bars, which filters the bar-to-bar oscillation that previously
-// flooded the chart. Old region labels stay frozen; Pine auto-purges beyond
-// max_labels_count. Neither layer is gated by displayMode (phase authority must
-// survive Execution mode). The trail is toggleable in case you want it sparse.
-showPhaseTrail    = input.bool(true, "Show Phase Region Trail (one label per phase)", group=GRP_DIE)
-regionConfirmBars = input.int (3,    "Phase Region Confirm Bars",                     group=GRP_DIE, minval=1, maxval=30)
-
+// Single LIVE label — exactly one object on the chart. Created once, then
+// LIVE-UPDATED (text / position / colour / style / size) on every bar so it
+// always shows the CURRENT region, and deleted when there is nothing to show.
+// It is NOT re-spawned on phase changes, so it never leaves a per-bar trail
+// across history. (The v18 flood came from spawning a frozen label on every
+// change while the live engine phase oscillates bar-to-bar.) Deliberately NOT
+// gated by f_die_show()/displayMode — this is THE phase authority and must
+// survive Execution mode and every density level.
+var label die_regionLbl = na
 float die_regionY    = direction == 1 ? high + atr * 1.2 : low - atr * 1.2
 bool  die_regionShow = showNarrative and die_regionTxt != "" and direction != 0 and die_regionVisible
 
-// (1) LIVE label — exactly one floating object on the current bar.
-var label die_regionLbl = na
 if die_regionShow
     if na(die_regionLbl)
         die_regionLbl := label.new(bar_index, die_regionY, die_regionTxt,
@@ -3595,27 +3590,6 @@ if die_regionShow
 else if not na(die_regionLbl)
     label.delete(die_regionLbl)
     die_regionLbl := na
-
-// (2) PERSISTENT region trail — one label per CONFIRMED region (debounced).
-var string die_committedRegion = ""
-var string die_pendingRegion   = ""
-var int    die_pendingCount    = 0
-var int    die_pendingStartBar = na
-var float  die_pendingStartY   = na
-if showPhaseTrail and die_regionShow
-    if die_regionTxt == die_pendingRegion
-        die_pendingCount := die_pendingCount + 1
-    else
-        die_pendingRegion   := die_regionTxt
-        die_pendingCount    := 1
-        die_pendingStartBar := bar_index
-        die_pendingStartY   := die_regionY
-    if die_pendingCount >= regionConfirmBars and die_pendingRegion != die_committedRegion
-        die_committedRegion := die_pendingRegion
-        label.new(nz(die_pendingStartBar, bar_index), nz(die_pendingStartY, die_regionY), die_regionTxt,
-             style=direction == 1 ? label.style_label_down : label.style_label_up,
-             color=color.new(die_regionCol, 10), textcolor=color.white,
-             size=die_regionBig ? size.normal : size.small)
 
 // ── DIE-7: ENTRY CYCLE CLUSTER TRACKING ──────────────────────────────────────
 var int   die_clusterCount     = 0
