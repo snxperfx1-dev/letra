@@ -29,6 +29,7 @@ bool   showReadout = input.bool (true, "Show Engine Readout panel",   group = GR
 bool   showStrat   = input.bool (true, "Show Chief Strategist panel", group = GRP)
 bool   showVerdict = input.bool (true, "Show verdict label",          group = GRP)
 int    minConf     = input.int  (55,  "Min confidence to ATTACK",     group = GRP, minval = 0, maxval = 100)
+int    pivLen      = input.int  (8,   "Wave pivot length",            group = GRP, minval = 2, maxval = 50)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART A — INVISIBLE NETWORK ENGINE (embedded)
@@ -218,6 +219,51 @@ int _sbear = (nz(mnDir) == -1 ? 1 : 0) + (nz(wDir) == -1 ? 1 : 0) + (nz(dDir) ==
 int   stackDir = _sb > _sbear ? 1 : _sbear > _sb ? -1 : 0
 float stackPct = math.max(_sb, _sbear) / 7.0 * 100.0
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// PART B2 — WAVE LIFECYCLE (compact reconstruction of Letra's wave engine)
+//   Detects the wave from a swing ORIGIN, measures PROGRESS toward its objective,
+//   walks the canonical phases (Origin → Expansion → Pre-Convexity → Induction →
+//   Liquidation → Objective Arrival → Absorption) and builds the wave NARRATIVE.
+// ═══════════════════════════════════════════════════════════════════════════════
+float _ph = ta.pivothigh(pivLen, pivLen)
+float _pl = ta.pivotlow(pivLen, pivLen)
+var float swH = na
+var float swL = na
+var float pSwH = na
+var float pSwL = na
+if not na(_ph)
+    pSwH := na(swH) ? _ph : swH
+    swH := _ph
+if not na(_pl)
+    pSwL := na(swL) ? _pl : swL
+    swL := _pl
+float waveOrigin = waveDir == 1 ? swL : waveDir == -1 ? swH : na
+float waveObj = waveDir == 1 ? math.max(nz(swH, close), nz(pSwH, close)) : waveDir == -1 ? math.min(nz(swL, close), nz(pSwL, close)) : na
+float _span0 = na(waveOrigin) ? _atr * 5.0 : math.abs(close - waveOrigin)
+if waveDir == 1 and (na(waveObj) or waveObj <= close)
+    waveObj := close + math.max(_span0 * 0.5, _atr * 2.0)
+if waveDir == -1 and (na(waveObj) or waveObj >= close)
+    waveObj := close - math.max(_span0 * 0.5, _atr * 2.0)
+float waveProgress = (na(waveOrigin) or na(waveObj) or waveObj == waveOrigin) ? 0.0 : math.max(0.0, math.min(130.0, (close - waveOrigin) / (waveObj - waveOrigin) * 100.0))
+var float _woPrev = na
+var bool  inducHit = false
+var float waveExt = na
+if not na(waveOrigin) and waveOrigin != _woPrev
+    _woPrev := waveOrigin
+    inducHit := false
+    waveExt := close
+if waveDir == 1
+    waveExt := na(waveExt) ? high : math.max(waveExt, high)
+else if waveDir == -1
+    waveExt := na(waveExt) ? low : math.min(waveExt, low)
+float _pull = waveDir == 1 ? nz(waveExt, close) - close : waveDir == -1 ? close - nz(waveExt, close) : 0.0
+bool inducNow = _pull > _atr * 0.8 and waveProgress > 20.0
+if inducNow
+    inducHit := true
+string wavePhase = na(waveOrigin) ? "—" : (waveProgress >= 100.0 and _pull > _atr * 0.5) ? "Absorption" : waveProgress >= 95.0 ? "Objective Arrival" : inducNow ? "Induction" : (inducHit and waveProgress > 55.0) ? "Liquidation" : waveProgress >= 45.0 ? "Pre-Convexity" : waveProgress > 5.0 ? "Expansion" : "Origin"
+string waveDirLbl = waveDir == 1 ? "Bullish" : waveDir == -1 ? "Bearish" : "Neutral"
+string waveNarr = na(waveOrigin) ? "Wave forming — awaiting structure." : waveDirLbl + " wave · " + str.tostring(math.round(waveProgress)) + "% to objective " + str.tostring(math.round_to_mintick(waveObj)) + " · " + wavePhase + "."
+
 // ── Drawing objects + hoisted state for global alerts ────────────────────────
 var array<line>  net_lines = array.new<line>()
 var array<label> net_lbls  = array.new<label>()
@@ -373,8 +419,8 @@ if barstate.islast
     float conflict = _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
     float threat = math.max(0.0, math.min(100.0, conflict * 0.45 + residual * 0.30 + (pdir != 0 and pdir != master ? 20.0 : 0.0) + (resCode == 1 ? 12.0 : 0.0)))
     float confidence = math.max(0.0, math.min(100.0, alignment * 0.45 + stackPct * 0.20 + attractor * 0.15 + math.min(20.0, _eligN * 1.5) - threat * 0.20))
-    string timing = resCode == 2 ? "RESOLVED" : completion < 15 ? "VERY EARLY" : completion < 35 ? "EARLY" : completion < 55 ? "DEVELOPING" : completion < 78 ? "MID CYCLE" : completion < 96 ? "LATE" : "TERMINAL"
-    string intent = master == 0 ? "BALANCE" : conflict > 55 ? "ABSORPTION" : resCode == 2 ? "ROTATION" : resCode == 1 ? "RESOLUTION" : (timing == "VERY EARLY" or timing == "EARLY") ? "EXPANSION" : (timing == "DEVELOPING" or timing == "MID CYCLE") ? "CONTINUATION" : "DELIVERY"
+    string timing = (wavePhase == "Absorption" or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
+    string intent = conflict > 55 ? "ABSORPTION" : wavePhase == "Expansion" ? "EXPANSION" : wavePhase == "Pre-Convexity" ? "CONTINUATION" : wavePhase == "Induction" ? "RESOLUTION" : wavePhase == "Liquidation" ? "DELIVERY" : wavePhase == "Objective Arrival" ? "DELIVERY" : wavePhase == "Absorption" ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
     float oppScore = math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
     string opportunity = master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
     string action = master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : resCode == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
@@ -383,13 +429,12 @@ if barstate.islast
     gConflict := conflict
     gAction := action
 
-    // ── Story / Language engine (energy terms) ───────────────────────────────
-    string _eL = master == 1 ? "Expansion remains in control." : master == -1 ? "Downside delivery remains in control." : "Energy is balanced — no clean control."
+    // ── Story / Language engine (energy terms, led by the wave narrative) ────
     string _rL = resCode == 2 ? "The process has RESOLVED — energy cleaned." : resCode == 1 ? "Process PARTIALLY resolved — cleaning incomplete." : "Primary structure UNRESOLVED — energy uncleaned."
     string _aL = attractor >= 60 ? "A strong unresolved attractor is pulling price." : attractor >= 35 ? "A moderate attractor is active." : "No dominant attractor."
     string _nL = "Network: " + str.tostring(_eligN) + " live structures, " + (pdir == master and master != 0 ? "agreeing." : pdir != 0 and pdir != master ? "opposing." : "neutral.")
     string _tL = threat < 25 ? "Threat low." : threat < 55 ? "Threat moderate." : "Threat high."
-    string story = _eL + " " + _rL + " " + _aL + " " + _nL + " " + _tL
+    string story = waveNarr + " " + _rL + " " + _aL + " " + _nL + " " + _tL
 
     string matters = ""
     matters := matters + (attractor >= 50 ? "Primary attractor · " : "")
@@ -420,25 +465,27 @@ if barstate.islast
     // ══════════════════════════════════════════════════════════════════════════
     if showReadout
         if na(readout)
-            readout := table.new(position.top_right, 2, 9, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
+            readout := table.new(position.top_right, 2, 12, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
         table.cell(readout, 0, 0, "ENGINE READOUT", text_color = #22d3ee, text_size = size.normal, text_halign = text.align_left)
         table.cell(readout, 1, 0, "", text_size = size.small)
-        table.cell(readout, 0, 1, "Letra · Wave dir", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 1, waveDir == 1 ? "▲" : waveDir == -1 ? "▼" : "—", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 2, "Letra · Stack", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 2, (stackDir == 1 ? "▲ " : stackDir == -1 ? "▼ " : "— ") + str.tostring(math.round(stackPct)) + "%", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 3, "Letra · Resolution", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 3, resCode == 2 ? "RESOLVED" : resCode == 1 ? "PARTIAL" : "UNRESOLVED", text_color = resCode == 0 ? #ff8a8a : resCode == 1 ? color.yellow : #00e676, text_size = size.small)
-        table.cell(readout, 0, 4, "Letra · Residual", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 4, str.tostring(math.round(residual)) + "%", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 5, "Letra · Attractor", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 5, str.tostring(math.round(attractor)) + "  " + f_cpNode(_attrIdx), text_color = #ffd000, text_size = size.small)
-        table.cell(readout, 0, 6, "Network · Bias", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 6, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ —", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.small)
-        table.cell(readout, 0, 7, "Network · Nodes", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 7, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = color.white, text_size = size.small)
-        table.cell(readout, 0, 8, "Network · Pressure", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
-        table.cell(readout, 1, 8, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #5aff9e : pdir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(readout, 0, 1, "Letra · Wave", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 1, (waveDir == 1 ? "▲ " : waveDir == -1 ? "▼ " : "— ") + wavePhase, text_color = waveDir == 1 ? #5aff9e : waveDir == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(readout, 0, 2, "Letra · Wave progress", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 2, str.tostring(math.round(waveProgress)) + "%  → " + str.tostring(math.round_to_mintick(waveObj)), text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 3, "Letra · Stack", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 3, (stackDir == 1 ? "▲ " : stackDir == -1 ? "▼ " : "— ") + str.tostring(math.round(stackPct)) + "%", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 4, "Letra · Resolution", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 4, resCode == 2 ? "RESOLVED" : resCode == 1 ? "PARTIAL" : "UNRESOLVED", text_color = resCode == 0 ? #ff8a8a : resCode == 1 ? color.yellow : #00e676, text_size = size.small)
+        table.cell(readout, 0, 5, "Letra · Residual", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 5, str.tostring(math.round(residual)) + "%", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 6, "Letra · Attractor", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 6, str.tostring(math.round(attractor)) + "  " + f_cpNode(_attrIdx), text_color = #ffd000, text_size = size.small)
+        table.cell(readout, 0, 7, "Network · Bias", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 7, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ —", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(readout, 0, 8, "Network · Nodes", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 8, str.tostring(array.size(nPx)) + " (" + str.tostring(_eligN) + " live)", text_color = color.white, text_size = size.small)
+        table.cell(readout, 0, 9, "Network · Pressure", text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+        table.cell(readout, 1, 9, str.tostring(math.round(pressure)), text_color = pdir == 1 ? #5aff9e : pdir == -1 ? #ff5a5a : color.gray, text_size = size.small)
 
     if showStrat
         if na(strat)
