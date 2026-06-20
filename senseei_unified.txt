@@ -718,8 +718,12 @@ bool _liqgInWindow = ie1a_currentPhase == "Expansion Induction" or ie1a_currentP
 if liqg_active and (not _liqgInWindow or (liqg_objArrival and liqg_trueCHoCH))
     liqg_active := false
 
-// ── SINGLE PHASE-STRING AUTHORITY — consumed by every label/panel/narrative ───
-string currentDisplayPhase = liqg_active ? (liqg_title + (liqg_subPhase != "" ? " • " + liqg_subPhase : "")) : ie1a_currentPhase
+// ── SINGLE PHASE-STRING AUTHORITY — Engine 1A owns the TOP label, ALWAYS the
+//    canonical phase. Engine 1A.7 internal states (Push/Displacement/…) and the
+//    liquidation-wave TITLE are informational only and surface separately via
+//    displaySub — they NEVER replace or rename the canonical phase.
+string currentDisplayPhase = ie1a_currentPhase
+string displaySub = (str.contains(ie1a_currentPhase, "Liquidity") and liqg_active and liqg_subPhase != "") ? ("State: " + liqg_subPhase + (na(liqg_distPct) ? "" : "   Dist " + str.tostring(math.round(liqg_distPct)) + "%") + "   Arr " + (liqg_objArrival ? "Yes" : (not na(liqg_distPct) and liqg_distPct < 12) ? "Soon" : "No")) : str.contains(ie1a_currentPhase, "Absorption") ? ("Cycle " + str.tostring(entryCycle) + "   Res " + str.tostring(math.round(100.0 - re_residualEnergyScore)) + "%") : ""
 string _cdpDir   = displayWaveDir_M5 == 1 ? "Bullish" : displayWaveDir_M5 == -1 ? "Bearish" : "Neutral"
 string liqg_arrTx = liqg_objArrival ? "Yes" : (not na(liqg_distPct) and liqg_distPct < 12) ? "Imminent" : "No"
 bool  _cdpSAgree = displayWaveDir_M5 != 0 and (displayWaveDir_M5 == 1 ? close > se5_inv : close < se5_inv)
@@ -1150,14 +1154,14 @@ if showRegions and barstate.islast and _regPhase != ""
     float _llo = math.min(nz(_regLo, low), low)
     if na(_regLiveBox)
         _regLiveBox := box.new(_regStart, _lhi, bar_index + 2, _llo, border_color = color.new(_lc, 25), border_width = 2, bgcolor = color.new(_lc, 82))
-        _regLiveLbl := label.new(bar_index + 2, _lhi, f_regTxt(_regPhase), style = label.style_label_left, color = color.new(_lc, 10), textcolor = #0d1117, size = size.normal)
+        _regLiveLbl := label.new(bar_index + 2, _lhi, f_regTxt(_regPhase) + (displaySub != "" ? "\n" + displaySub : ""), style = label.style_label_left, color = color.new(_lc, 10), textcolor = #0d1117, size = size.normal)
     else
         box.set_lefttop(_regLiveBox, _regStart, _lhi)
         box.set_rightbottom(_regLiveBox, bar_index + 2, _llo)
         box.set_border_color(_regLiveBox, color.new(_lc, 25))
         box.set_bgcolor(_regLiveBox, color.new(_lc, 82))
         label.set_xy(_regLiveLbl, bar_index + 2, _lhi)
-        label.set_text(_regLiveLbl, f_regTxt(_regPhase))
+        label.set_text(_regLiveLbl, f_regTxt(_regPhase) + (displaySub != "" ? "\n" + displaySub : ""))
         label.set_color(_regLiveLbl, color.new(_lc, 10))
 
 // ═══════════════════════════════════════════════════════════════════════════════
