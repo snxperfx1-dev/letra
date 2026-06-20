@@ -1178,7 +1178,7 @@ int   tP1 = math.min(90, math.round(45.0 + timeAlign * 0.4))
 int   tP3 = math.min(40, math.round(timeConflict * 0.25))
 int   tP2 = math.max(0, 100 - tP1 - tP3)
 string tStack = f_tTag(tMnO, "MN") + " " + f_tTag(tWO, "W") + " " + f_tTag(tDO, "D") + " " + f_tTag(tH4O, "H4") + " " + f_tTag(tH1O, "H1")
-string tSeq = (not tH1Lt ? "H1 low sweep" : not tH1Ht ? "H1 high sweep" : "H1 complete") + " -> H4 " + (f_tBias(tH4O) == 1 ? "up" : "down") + " -> D " + (f_tBias(tDO) == 1 ? "highs" : "lows") + " -> W " + (f_tBias(tWO) == 1 ? "highs" : "lows")
+string tSeq = (not tH1Lt ? "take H1 low" : not tH1Ht ? "take H1 high" : "H1 done") + " -> H4 " + (f_tBias(tH4O) == 1 ? "up" : "down") + " -> D " + (f_tBias(tDO) == 1 ? "highs" : "lows") + " -> W " + (f_tBias(tWO) == 1 ? "highs" : "lows")
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MARKET CONTEXT ENGINES — more of Letra's contextual intelligence, reconstructed
@@ -1479,14 +1479,18 @@ if barstate.islast
         int    _altProb  = math.max(tP2, tP3)
         string _objTx = na(waveObj) ? "objective" : str.tostring(math.round_to_mintick(waveObj))
         // ── FLIGHT PLAN waypoints — real chart coordinates ───────────────────
-        //  WP1 sweep  = the H1 liquidity taken first (low-first -> H1 low, etc.)
-        //  WP2 FU     = flip-zone mid (the FU the move returns through)
-        //  WP3 obj    = the M5 wave objective
-        float  _sweepPx = h1Timing == "COMPLETION" ? na : h1Timing == "LOW FIRST" ? tH1L : h1Timing == "HIGH FIRST" ? tH1H : (master == 1 ? tH1L : master == -1 ? tH1H : na)
-        string _sweepLbl = na(_sweepPx) ? "" : (_sweepPx == tH1L ? "H1 LOW" : "H1 HIGH")
+        //  WP1 sweep = nearest REAL M5 swing liquidity on the inducement side
+        //              (delivery up -> sweep the swing LOW first; delivery down -> swing HIGH)
+        //  WP2 FU    = M5 flip-zone mid (the order-block the move reclaims)
+        //  WP3 obj   = the M5 wave objective
+        //  NOTE: these are genuine se5 structure pivots / engine levels — NOT the
+        //  current hourly candle's high/low (which is a time-cycle boundary, not structure).
+        bool   _objAbove = na(waveObj) ? (master >= 0) : waveObj > close
+        float  _sweepPx = _objAbove ? se5_sl : se5_sh
+        string _sweepLbl = na(_sweepPx) ? "" : (_objAbove ? "M5 SWING LOW" : "M5 SWING HIGH")
         float  _fuPx = (not na(flipTop) and not na(flipBot)) ? (flipTop + flipBot) / 2.0 : eae_primaryAttractorPrice
         float  _objPx = waveObj
-        string _legSweep = na(_sweepPx) ? "H1 set" : "Sweep " + _sweepLbl + " @ " + str.tostring(math.round_to_mintick(_sweepPx))
+        string _legSweep = na(_sweepPx) ? "no M5 swing yet" : "Sweep " + _sweepLbl + " @ " + str.tostring(math.round_to_mintick(_sweepPx))
         string _legFU    = na(_fuPx)    ? "FU forming"  : "FU @ " + str.tostring(math.round_to_mintick(_fuPx))
         string _legObj   = na(_objPx)   ? "obj forming" : "OBJ @ " + str.tostring(math.round_to_mintick(_objPx))
         string _primPath = _legSweep + " → " + _legFU + " → " + _legObj
@@ -1540,13 +1544,19 @@ if barstate.islast
             if not na(_attE)
                 array.push(hud_lines, line.new(bar_index - 3, _attE, _xr, _attE, color = color.new(#94a3b8, 50), width = 1, style = line.style_dotted))
                 array.push(hud_lbls, label.new(_xr, _attE, "⊙ TGT3  " + str.tostring(math.round_to_mintick(_attE)), style = label.style_label_left, color = color.new(#475569, 18), textcolor = #e2e8f0, size = size.tiny))
-            // FORMATION — H1 cycle boundaries (the sweep liquidity the plan refers to)
-            if not na(tH1H)
-                array.push(hud_lines, line.new(bar_index - 3, tH1H, _xr, tH1H, color = color.new(#a78bfa, 58), width = 1, style = line.style_dotted))
-                array.push(hud_lbls, label.new(_xr, tH1H, "H1 HI  " + str.tostring(math.round_to_mintick(tH1H)), style = label.style_label_left, color = color.new(#a78bfa, 78), textcolor = #c4b5fd, size = size.tiny))
-            if not na(tH1L)
-                array.push(hud_lines, line.new(bar_index - 3, tH1L, _xr, tH1L, color = color.new(#a78bfa, 58), width = 1, style = line.style_dotted))
-                array.push(hud_lbls, label.new(_xr, tH1L, "H1 LO  " + str.tostring(math.round_to_mintick(tH1L)), style = label.style_label_left, color = color.new(#a78bfa, 78), textcolor = #c4b5fd, size = size.tiny))
+            // STRUCTURE — genuine swing pivots (real M5 + H1 structure), NOT candle boundaries
+            if not na(se5_sh)
+                array.push(hud_lines, line.new(bar_index - 3, se5_sh, _xr, se5_sh, color = color.new(#94a3b8, 45), width = 1, style = line.style_dashed))
+                array.push(hud_lbls, label.new(_xr, se5_sh, "M5 SWING HI  " + str.tostring(math.round_to_mintick(se5_sh)), style = label.style_label_left, color = color.new(#94a3b8, 75), textcolor = #cbd5e1, size = size.tiny))
+            if not na(se5_sl)
+                array.push(hud_lines, line.new(bar_index - 3, se5_sl, _xr, se5_sl, color = color.new(#94a3b8, 45), width = 1, style = line.style_dashed))
+                array.push(hud_lbls, label.new(_xr, se5_sl, "M5 SWING LO  " + str.tostring(math.round_to_mintick(se5_sl)), style = label.style_label_left, color = color.new(#94a3b8, 75), textcolor = #cbd5e1, size = size.tiny))
+            if not na(se60_sh)
+                array.push(hud_lines, line.new(bar_index - 3, se60_sh, _xr, se60_sh, color = color.new(#a78bfa, 62), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, se60_sh, "H1 SWING HI  " + str.tostring(math.round_to_mintick(se60_sh)), style = label.style_label_left, color = color.new(#a78bfa, 80), textcolor = #c4b5fd, size = size.tiny))
+            if not na(se60_sl)
+                array.push(hud_lines, line.new(bar_index - 3, se60_sl, _xr, se60_sl, color = color.new(#a78bfa, 62), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, se60_sl, "H1 SWING LO  " + str.tostring(math.round_to_mintick(se60_sl)), style = label.style_label_left, color = color.new(#a78bfa, 80), textcolor = #c4b5fd, size = size.tiny))
             // FLIGHT PLAN / VECTOR — projected route through the waypoints
             color _fpCol = master == 1 ? #34d399 : master == -1 ? #fb7185 : #38bdf8
             int   _x1 = bar_index + 8
