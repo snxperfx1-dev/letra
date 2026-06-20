@@ -11,7 +11,7 @@
 // For the FULL multi-timeframe network, run it on M1–M15 (Pine builds the network
 // from the chart timeframe upward).
 // ═══════════════════════════════════════════════════════════════════════════════
-indicator("F16 Raptor", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+indicator("F16 Raptor 2", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string GRP = "Master Senseei"
@@ -1096,86 +1096,61 @@ if not na(atkT3Px) and (atkT3Px >= _atkRef ? high >= atkT3Px : low <= atkT3Px)
     atkT3Hit := true
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// REGION-BASED DISPLAY AUTHORITY  (audit fix)
-//   Every phase the engine emits is laid down as a PERSISTENT, span-anchored
-//   region (box + label across the candles it occupied) — not a single floating
-//   "current instant" label that gets overwritten each bar. A debounce
-//   (regionConfirmBars) requires a new phase to HOLD before it commits, which
-//   kills the bar-to-bar oscillation flood. Renders straight from the single
-//   authority string `currentDisplayPhase` — no second phase map anywhere.
+// MILESTONE LIFECYCLE LABELS (display only) — ONE marker per lifecycle EVENT of the
+// M5 wave, in canonical order, using the lifecycle vocabulary. Replaces the per-
+// phase region carpet. DISPLACEMENT = counter-move BEFORE the flip zone (repeatable,
+// numbered); the same behaviour INSIDE the flip zone = INDUCTION. FLIPZONE + DEMAND
+// render as horizontal bands. No Engine 1A changes — reads se5 phase / flip / origin.
 // ═══════════════════════════════════════════════════════════════════════════════
-f_regCol(string _p) =>
-     str.contains(_p, "Liquidation Wave") ? color.orange :
-     str.contains(_p, "Induction")        ? #fbbf24 :
-     str.contains(_p, "Pre-Convexity")    ? #38bdf8 :
-     str.contains(_p, "Liquidity")        ? #a78bfa :
-     str.contains(_p, "Absorption")       ? #fb7185 :
-     str.contains(_p, "New High")         ? #34d399 :
-     str.contains(_p, "New Low")          ? #fb7185 :
-     str.contains(_p, "Expansion")        ? #34d399 :
-     (str.contains(_p, "Demand Return") or str.contains(_p, "Supply Return")) ? #fbbf24 : #94a3b8
-f_regTxt(string _p) => str.upper(str.replace_all(_p, " • ", "  —  "))
+f_mileWord(int _c) => _c == 1 ? "EXPANSION" : _c == 2 ? "DISPLACEMENT" : _c == 3 ? "INDUCTION" : _c == 4 ? "LIQUIDATION" : _c == 5 ? "NEW HIGH" : _c == 6 ? "NEW LOW" : _c == 7 ? "ABSORPTION" : (_c == 8 or _c == 9) ? "DISPLACEMENT" : _c == 10 ? "INDUCTION" : _c == 11 ? "LIQUIDATION" : _c == 12 ? "TAP TO DEMAND" : _c == 13 ? "TAP TO SUPPLY" : ""
+f_mileCol(int _c) => (_c == 5 or _c == 6) ? #e2e8f0 : _c == 7 ? #fb7185 : (_c == 4 or _c == 11) ? #22d3ee : (_c == 3 or _c == 10) ? #fbbf24 : (_c == 2 or _c == 8 or _c == 9) ? #38bdf8 : (_c == 12 or _c == 13) ? #a78bfa : #34d399
 
-var array<box>   _regBoxes = array.new<box>()
-var array<label> _regLbls  = array.new<label>()
-var string _regPhase = ""
-var int    _regStart = 0
-var float  _regHi = na
-var float  _regLo = na
-var string _pendPhase = ""
-var int    _pendCount = 0
-var box    _regLiveBox = na
-var label  _regLiveLbl = na
+var array<label> mileLbls = array.new<label>()
+var int   _mileWaveDir = 0
+var int   _mileLastCode = 0
+var int   _mileDispN = 0
+var box   flipBand      = na
+var label flipBandLbl   = na
+var box   demandBand    = na
+var label demandBandLbl = na
 
 if showRegions and barstate.isconfirmed
-    string _now = currentDisplayPhase
-    if _regPhase == ""
-        _regPhase := _now
-        _regStart := bar_index
-        _regHi := high
-        _regLo := low
-    else if _now != _regPhase
-        if _now == _pendPhase
-            _pendCount := _pendCount + 1
-        else
-            _pendPhase := _now
-            _pendCount := 1
-        if _pendCount >= regionConfirmBars
-            color _fc = f_regCol(_regPhase)
-            box _fbx = box.new(_regStart, nz(_regHi, high), bar_index, nz(_regLo, low), border_color = color.new(_fc, 45), border_width = 1, bgcolor = color.new(_fc, 89))
-            label _flb = label.new(math.round((_regStart + bar_index) / 2), nz(_regHi, high), f_regTxt(_regPhase), style = label.style_label_down, color = color.new(_fc, 22), textcolor = #0d1117, size = size.small)
-            array.push(_regBoxes, _fbx)
-            array.push(_regLbls, _flb)
-            if array.size(_regBoxes) > 40
-                box.delete(array.shift(_regBoxes))
-                label.delete(array.shift(_regLbls))
-            _regPhase := _now
-            _regStart := bar_index
-            _regHi := high
-            _regLo := low
-            _pendPhase := ""
-            _pendCount := 0
-    else
-        _pendPhase := ""
-        _pendCount := 0
-    _regHi := math.max(nz(_regHi, high), high)
-    _regLo := math.min(nz(_regLo, low), low)
+    int _pc = int(nz(se5_ph))
+    if l0_dir != _mileWaveDir
+        _mileWaveDir := l0_dir
+        _mileLastCode := 0
+        _mileDispN := 0
+    if _pc != 0 and _pc != _mileLastCode and f_mileWord(_pc) != ""
+        bool _isDisp = _pc == 2 or _pc == 8 or _pc == 9
+        bool _inFlip = not na(flipTop) and not na(flipBot) and close <= flipTop and close >= flipBot
+        string _w = _isDisp ? (_inFlip ? "INDUCTION" : "DISPLACEMENT") : f_mileWord(_pc)
+        if _w == "DISPLACEMENT"
+            _mileDispN := _mileDispN + 1
+        string _txt = (_w == "DISPLACEMENT" and _mileDispN > 1) ? "DISPLACEMENT " + str.tostring(_mileDispN) : _w
+        int _cc = (_isDisp and _inFlip) ? 3 : _pc
+        float _y = l0_dir == 1 ? high + atr * 0.9 : low - atr * 0.9
+        label _ml = label.new(bar_index, _y, _txt, style = l0_dir == 1 ? label.style_label_down : label.style_label_up, color = color.new(f_mileCol(_cc), 12), textcolor = #0d1117, size = size.small)
+        array.push(mileLbls, _ml)
+        if array.size(mileLbls) > 60
+            label.delete(array.shift(mileLbls))
+        _mileLastCode := _pc
 
-if showRegions and barstate.islast and _regPhase != ""
-    color _lc = f_regCol(_regPhase)
-    float _lhi = math.max(nz(_regHi, high), high)
-    float _llo = math.min(nz(_regLo, low), low)
-    if na(_regLiveBox)
-        _regLiveBox := box.new(_regStart, _lhi, bar_index + 2, _llo, border_color = color.new(_lc, 25), border_width = 2, bgcolor = color.new(_lc, 82))
-        _regLiveLbl := label.new(bar_index + 2, _lhi, f_regTxt(_regPhase) + (displaySub != "" ? "\n" + displaySub : ""), style = label.style_label_left, color = color.new(_lc, 10), textcolor = #0d1117, size = size.normal)
-    else
-        box.set_lefttop(_regLiveBox, _regStart, _lhi)
-        box.set_rightbottom(_regLiveBox, bar_index + 2, _llo)
-        box.set_border_color(_regLiveBox, color.new(_lc, 25))
-        box.set_bgcolor(_regLiveBox, color.new(_lc, 82))
-        label.set_xy(_regLiveLbl, bar_index + 2, _lhi)
-        label.set_text(_regLiveLbl, f_regTxt(_regPhase) + (displaySub != "" ? "\n" + displaySub : ""))
-        label.set_color(_regLiveLbl, color.new(_lc, 10))
+if showRegions and barstate.islast
+    if not na(flipBand)
+        box.delete(flipBand)
+    if not na(flipBandLbl)
+        label.delete(flipBandLbl)
+    if not na(demandBand)
+        box.delete(demandBand)
+    if not na(demandBandLbl)
+        label.delete(demandBandLbl)
+    if not na(flipTop) and not na(flipBot)
+        flipBand := box.new(bar_index - 250, flipTop, bar_index + 10, flipBot, bgcolor = color.new(#fbbf24, 84), border_color = color.new(#fbbf24, 55), border_width = 1)
+        flipBandLbl := label.new(bar_index + 10, (flipTop + flipBot) / 2.0, "FLIPZONE", style = label.style_label_left, color = color.new(#fbbf24, 35), textcolor = #0d1117, size = size.small)
+    float _demT = direction == 1 ? point4OriginLow : direction == -1 ? point4OriginHigh : na
+    if not na(_demT)
+        demandBand := box.new(bar_index - 250, _demT + atr * 0.25, bar_index + 10, _demT - atr * 0.25, bgcolor = color.new(#fbbf24, 84), border_color = color.new(#fbbf24, 55), border_width = 1)
+        demandBandLbl := label.new(bar_index + 10, _demT, direction == 1 ? "TAP TO DEMAND" : "TAP TO SUPPLY", style = label.style_label_left, color = color.new(#fbbf24, 35), textcolor = #0d1117, size = size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE) — full 5-cycle stack + sub-engines
@@ -1271,6 +1246,33 @@ var int    gMaster   = 0
 var float  gConflict = 0.0
 var string gAction   = "WAIT"
 
+// ── Shared compute outputs (hoisted to global so the split panel blocks below
+//    can read them — each `if barstate.islast` block is a separate scope) ──────
+var int        master      = 0
+var float       alignment   = 50.0
+var float       conflict    = 0.0
+var float       threat      = 0.0
+var float       confidence  = 0.0
+var string      timing      = ""
+var string      intent      = ""
+var float       oppScore    = 0.0
+var string      opportunity = "NONE"
+var string      action      = "WAIT"
+var float       residual    = 0.0
+var int         resCode     = 0
+var float       attractor   = 0.0
+var float       pressure    = 0.0
+var int         pdir        = 0
+var int         _eligN      = 0
+var int         _attrIdx    = -1
+var float       _fezHi      = na
+var float       _fezLo      = na
+var string      matters     = ""
+var int         _nextIdx    = -1
+var color       vCol        = na
+var color       aCol        = na
+var array<int>  _fwd        = na
+
 if barstate.islast
     if array.size(net_lines) > 0
         for _i = 0 to array.size(net_lines) - 1
@@ -1290,15 +1292,15 @@ if barstate.islast
     // ── Node tallies + network drawing ───────────────────────────────────────
     int   _openMem = 0
     int   _consumed = 0
-    int   _eligN = 0
+    _eligN := 0
     float _bullAuth = 0.0
     float _bearAuth = 0.0
     int   _domIdx = -1
     float _domAuth = 0.0
-    int   _attrIdx = -1
+    _attrIdx := -1
     float _attrRank = -1.0
-    float _fezHi = na
-    float _fezLo = na
+    _fezHi := na
+    _fezLo := na
     int   _fezHiW = 0
     int   _fezLoW = 0
     float _fezHiA = 0.0
@@ -1392,11 +1394,11 @@ if barstate.islast
     // PART C — ENERGY RESOLUTION (derived from the live node populations)
     // ══════════════════════════════════════════════════════════════════════════
     // Resolution / residual / attractor read straight from LETRA (no node proxy)
-    float residual  = re_residualEnergyScore
-    int   resCode   = re_resolutionState == "RESOLVED" ? 2 : re_resolutionState == "PARTIALLY RESOLVED" ? 1 : 0
-    float attractor = eae_primaryAttractorScore
-    float pressure = (_bullAuth + _bearAuth) > 0 ? (_bullAuth - _bearAuth) / (_bullAuth + _bearAuth) * 100.0 : 0.0
-    int   pdir = pressure > 12 ? 1 : pressure < -12 ? -1 : 0
+    residual  := re_residualEnergyScore
+    resCode   := re_resolutionState == "RESOLVED" ? 2 : re_resolutionState == "PARTIALLY RESOLVED" ? 1 : 0
+    attractor := eae_primaryAttractorScore
+    pressure := (_bullAuth + _bearAuth) > 0 ? (_bullAuth - _bearAuth) / (_bullAuth + _bearAuth) * 100.0 : 0.0
+    pdir := pressure > 12 ? 1 : pressure < -12 ? -1 : 0
 
     // ══════════════════════════════════════════════════════════════════════════
     // PART D — SENSEEI META-INTELLIGENCE
@@ -1406,18 +1408,18 @@ if barstate.islast
     int _vt3 = netBias
     int _vt4 = pdir
     int _sum = _vt1 + _vt2 + _vt3 + _vt4
-    int master = _sum > 0 ? 1 : _sum < 0 ? -1 : 0
+    master := _sum > 0 ? 1 : _sum < 0 ? -1 : 0
     int _cast = (_vt1 != 0 ? 1 : 0) + (_vt2 != 0 ? 1 : 0) + (_vt3 != 0 ? 1 : 0) + (_vt4 != 0 ? 1 : 0)
     int _forV = (_vt1 == master and _vt1 != 0 ? 1 : 0) + (_vt2 == master and _vt2 != 0 ? 1 : 0) + (_vt3 == master and _vt3 != 0 ? 1 : 0) + (_vt4 == master and _vt4 != 0 ? 1 : 0)
-    float alignment = _cast > 0 ? _forV / _cast * 100.0 : 50.0
-    float conflict = _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
-    float threat = math.max(0.0, math.min(100.0, conflict * 0.40 + residual * 0.28 + timeConflict * 0.12 + (pdir != 0 and pdir != master ? 18.0 : 0.0) + (resCode == 1 ? 10.0 : 0.0)))
-    float confidence = math.max(0.0, math.min(100.0, alignment * 0.40 + timeAlign * 0.12 + stackPct * 0.18 + attractor * 0.15 + math.min(15.0, _eligN * 1.2) - threat * 0.20))
-    string timing = (str.contains(ie1a_currentPhase, "Absorption") or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
-    string intent = conflict > 55 ? "ABSORPTION" : liqg_active ? "DELIVERY" : (str.contains(ie1a_currentPhase, "Expansion") and not str.contains(ie1a_currentPhase, "Pre-Convexity") and not str.contains(ie1a_currentPhase, "Induction") and not str.contains(ie1a_currentPhase, "Liquidity")) ? "EXPANSION" : str.contains(ie1a_currentPhase, "Pre-Convexity") ? "CONTINUATION" : str.contains(ie1a_currentPhase, "Induction") ? "RESOLUTION" : str.contains(ie1a_currentPhase, "Liquidity") ? "DELIVERY" : (str.contains(ie1a_currentPhase, "New High") or str.contains(ie1a_currentPhase, "New Low")) ? "DELIVERY" : str.contains(ie1a_currentPhase, "Absorption") ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
-    float oppScore = math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
-    string opportunity = master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
-    string action = master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : resCode == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
+    alignment := _cast > 0 ? _forV / _cast * 100.0 : 50.0
+    conflict := _cast > 0 ? (_cast - _forV) / _cast * 100.0 : 0.0
+    threat := math.max(0.0, math.min(100.0, conflict * 0.40 + residual * 0.28 + timeConflict * 0.12 + (pdir != 0 and pdir != master ? 18.0 : 0.0) + (resCode == 1 ? 10.0 : 0.0)))
+    confidence := math.max(0.0, math.min(100.0, alignment * 0.40 + timeAlign * 0.12 + stackPct * 0.18 + attractor * 0.15 + math.min(15.0, _eligN * 1.2) - threat * 0.20))
+    timing := (str.contains(ie1a_currentPhase, "Absorption") or resCode == 2) ? "RESOLVED" : waveProgress < 15 ? "VERY EARLY" : waveProgress < 35 ? "EARLY" : waveProgress < 55 ? "DEVELOPING" : waveProgress < 80 ? "MID CYCLE" : waveProgress < 96 ? "LATE" : "TERMINAL"
+    intent := conflict > 55 ? "ABSORPTION" : liqg_active ? "DELIVERY" : (str.contains(ie1a_currentPhase, "Expansion") and not str.contains(ie1a_currentPhase, "Pre-Convexity") and not str.contains(ie1a_currentPhase, "Induction") and not str.contains(ie1a_currentPhase, "Liquidity")) ? "EXPANSION" : str.contains(ie1a_currentPhase, "Pre-Convexity") ? "CONTINUATION" : str.contains(ie1a_currentPhase, "Induction") ? "RESOLUTION" : str.contains(ie1a_currentPhase, "Liquidity") ? "DELIVERY" : (str.contains(ie1a_currentPhase, "New High") or str.contains(ie1a_currentPhase, "New Low")) ? "DELIVERY" : str.contains(ie1a_currentPhase, "Absorption") ? "ABSORPTION" : master == 0 ? "BALANCE" : "CONTINUATION"
+    oppScore := math.max(0.0, math.min(100.0, alignment * 0.40 + attractor * 0.30 + stackPct * 0.30 - threat * 0.35))
+    opportunity := master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
+    action := master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : resCode == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
 
     gMaster := master
     gConflict := conflict
@@ -1430,7 +1432,7 @@ if barstate.islast
     string _tL = threat < 25 ? "Threat low." : threat < 55 ? "Threat moderate." : "Threat high."
     string story = waveNarr + " " + _rL + " " + _aL + " " + _nL + " " + _tL
 
-    string matters = ""
+    matters := ""
     matters := matters + (attractor >= 50 ? "Primary attractor · " : "")
     matters := matters + (residual >= 50 ? "Residual energy · " : "")
     matters := matters + (resCode == 0 ? "Unresolved structure · " : "")
@@ -1442,11 +1444,11 @@ if barstate.islast
     nomatter := nomatter + (conflict < 18 ? "Minor pullback · " : "")
     nomatter := nomatter == "" ? "—" : "• " + str.replace_all(nomatter, " · ", "\n• ")
 
-    array<int> _fwd = f_pathNodes(true)
-    int _nextIdx = array.size(_fwd) > 0 ? array.get(_fwd, 0) : -1
+    _fwd := f_pathNodes(true)
+    _nextIdx := array.size(_fwd) > 0 ? array.get(_fwd, 0) : -1
 
-    color vCol = master == 1 ? #34d399 : master == -1 ? #fb7185 : #475569
-    color aCol = action == "ATTACK" ? #34d399 : action == "PREPARE" ? #fbbf24 : str.startswith(action, "MANAGE") ? #29b6f6 : #475569
+    vCol := master == 1 ? #34d399 : master == -1 ? #fb7185 : #475569
+    aCol := action == "ATTACK" ? #34d399 : action == "PREPARE" ? #fbbf24 : str.startswith(action, "MANAGE") ? #29b6f6 : #475569
 
     // ── Verdict label ─────────────────────────────────────────────────────────
     if showVerdict
@@ -1457,6 +1459,8 @@ if barstate.islast
     // ══════════════════════════════════════════════════════════════════════════
     // PART E — PANELS
     // ══════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
     if showReadout
         if na(readout)
             readout := table.new(position.top_right, 2, 12, bgcolor = color.new(#0a0e27, 4), frame_color = color.new(#22d3ee, 25), frame_width = 2, border_width = 0)
@@ -1485,6 +1489,7 @@ if barstate.islast
         table.cell(readout, 0, 11, "Letra · Rotation", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
         table.cell(readout, 1, 11, timeConflict >= 50 ? "ROTATING" : "ALIGNED", text_color = timeConflict >= 50 ? #fbbf24 : #34d399, text_size = size.small)
 
+if barstate.islast
     if showStrat
         if na(strat)
             strat := table.new(position.top_left, 2, 10, bgcolor = color.new(#0a0e27, 4), frame_color = color.new(#22d3ee, 25), frame_width = 2, border_width = 0)
@@ -1512,6 +1517,8 @@ if barstate.islast
     // ══════════════════════════════════════════════════════════════════════════
     // DUAL CO-PILOT (bottom-right) — Opportunity (tactical) + Senzo (strategic)
     // ══════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
     if showCopilot
         // ── Opportunity reads ────────────────────────────────────────────────
         string _alD  = f_tBias(tDO) == 1 ? "BULL" : f_tBias(tDO) == -1 ? "BEAR" : "—"
@@ -1701,6 +1708,8 @@ if barstate.islast
     // WAVE MATRIX PANEL (bottom-center) — narrative · execution probability ·
     // MTF fusion · multi-level progress. All values READ from the engines.
     // ══════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
     if showMatrix
         if na(matrix)
             matrix := table.new(position.bottom_center, 4, 15, bgcolor = color.new(#0a0e27, 4), frame_color = color.new(#22d3ee, 30), frame_width = 1, border_width = 1)
@@ -1800,6 +1809,8 @@ if barstate.islast
     // ══════════════════════════════════════════════════════════════════════════
     // WAVE & TIMEFRAMES PANEL (bottom-left) — narrative + per-TF wave stack
     // ══════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
     if showTF
         if na(tfPanel)
             tfPanel := table.new(position.bottom_left, 2, 9, bgcolor = color.new(#0a0e27, 4), frame_color = color.new(#22d3ee, 25), frame_width = 2, border_width = 0)
@@ -1826,6 +1837,8 @@ if barstate.islast
     // RECURSIVE PHASE STACK (top-center) — PIE + RPE: nested canonical phases per
     // timeframe + parent relationship + absorption anchor. DISPLAY ONLY.
     // ══════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
     if showStack
         if na(stackPanel)
             stackPanel := table.new(position.top_center, 1, 7, bgcolor = color.new(#0a0e27, 6), frame_color = color.new(#22d3ee, 25), frame_width = 2, border_width = 0)
