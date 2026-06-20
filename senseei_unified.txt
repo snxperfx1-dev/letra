@@ -1044,22 +1044,29 @@ var bool atkT1Hit = false
 var bool atkT2Hit = false
 var bool atkT3Hit = false
 var int  _atkDirPrev = 0
-if direction != _atkDirPrev
+// Trade bias = where the objective sits vs the entry (self-consistent with the
+// targets), falling back to wave direction only when levels aren't formed yet.
+int _atkBias = (na(atkEntryPx) or na(atkT1Px)) ? (waveDir != 0 ? waveDir : direction) : (atkT1Px >= atkEntryPx ? 1 : -1)
+float _atkRef = nz(atkEntryPx, close)
+if _atkBias != _atkDirPrev
     atkEntered := false
     atkStopHit := false
     atkT1Hit := false
     atkT2Hit := false
     atkT3Hit := false
-    _atkDirPrev := direction
-if not na(atkEntryPx) and (direction == 1 ? low <= atkEntryPx : direction == -1 ? high >= atkEntryPx : false)
+    _atkDirPrev := _atkBias
+// ENTRY — price pulls back to the flip zone from the trend side
+if not na(atkEntryPx) and (_atkBias == 1 ? low <= atkEntryPx : high >= atkEntryPx)
     atkEntered := true
-if not na(atkStopPx) and (direction == 1 ? close < atkStopPx : direction == -1 ? close > atkStopPx : false)
+// STOP — close beyond the stop on the far side from the objective
+if not na(atkStopPx) and (atkStopPx < _atkRef ? close < atkStopPx : close > atkStopPx)
     atkStopHit := true
-if not na(atkT1Px) and (direction == 1 ? high >= atkT1Px : direction == -1 ? low <= atkT1Px : false)
+// TARGETS — reached only when price trades to each level from the entry side
+if not na(atkT1Px) and (atkT1Px >= _atkRef ? high >= atkT1Px : low <= atkT1Px)
     atkT1Hit := true
-if not na(atkT2Px) and (direction == 1 ? high >= atkT2Px : direction == -1 ? low <= atkT2Px : false)
+if not na(atkT2Px) and (atkT2Px >= _atkRef ? high >= atkT2Px : low <= atkT2Px)
     atkT2Hit := true
-if not na(atkT3Px) and (direction == 1 ? high >= atkT3Px : direction == -1 ? low <= atkT3Px : false)
+if not na(atkT3Px) and (atkT3Px >= _atkRef ? high >= atkT3Px : low <= atkT3Px)
     atkT3Hit := true
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -1670,9 +1677,10 @@ if barstate.islast
     if showAttack
         if na(attack)
             attack := table.new(position.bottom_center, 3, 6, bgcolor = color.new(#060a12, 2), frame_color = color.new(#fb7185, 24), frame_width = 2, border_width = 1)
-        string _atkDirTx = direction == 1 ? "LONG" : direction == -1 ? "SHORT" : "NO WAVE"
+        string _atkDirTx = _atkBias == 1 ? "LONG" : _atkBias == -1 ? "SHORT" : "NO WAVE"
+        color  _atkDirCol = _atkBias == 1 ? #34d399 : _atkBias == -1 ? #fb7185 : #475569
         table.cell(attack, 0, 0, "⚔ ATTACK SEQUENCE", text_color = #ffe1e6, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#7f1d1d, 16))
-        table.cell(attack, 1, 0, _atkDirTx, text_color = vCol, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(#7f1d1d, 16))
+        table.cell(attack, 1, 0, _atkDirTx, text_color = _atkDirCol, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(#7f1d1d, 16))
         table.cell(attack, 2, 0, "STATUS " + _liveDot, text_color = _pulse ? #34d399 : #94a3b8, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(#7f1d1d, 16))
         table.cell(attack, 0, 1, "ENTRY", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
         table.cell(attack, 1, 1, na(atkEntryPx) ? "—" : str.tostring(math.round_to_mintick(atkEntryPx)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
