@@ -191,7 +191,7 @@ if _okM5 and nz(m5V) == 1 and not na(m5Tip) and (na(_pvM5) or m5Tip != _pvM5)
     f_nodeAdd(m5Tip, m5Mid, nz(m5Dir), nz(m5Sc), 3)
     _pvM5 := m5Tip
 
-float _atr = ta.atr(14)
+float _natr = ta.atr(14)
 if array.size(nPx) > 0
     for _i = 0 to array.size(nPx) - 1
         if array.get(nState, _i) != 2
@@ -201,7 +201,7 @@ if array.size(nPx) > 0
             if (_nd == -1 ? close > _np : close < _np)
                 array.set(nState, _i, 2)
             else
-                if math.abs(close - _np) < _atr * 0.25
+                if math.abs(close - _np) < _natr * 0.25
                     array.set(nRev, _i, array.get(nRev, _i) + 1)
                 int _wtn = array.get(nWt, _i)
                 array.set(nState, _i, _age > historyBars * _wtn ? 3 : _age > dormantBars * _wtn ? 1 : 0)
@@ -1195,15 +1195,17 @@ string tSeq = (not tH1Lt ? "H1 low sweep" : not tH1Ht ? "H1 high sweep" : "H1 co
 // internally: Regime · Momentum · Volatility · Liquidity sweep · Energy Dissipation
 // (EDE) · HTF/LTF Fusion. These give Senseei the "where are we, structurally" read.
 // ═══════════════════════════════════════════════════════════════════════════════
-float _ctxSpread = (ta.ema(close, 20) - _ema50) / math.max(_atr, 1e-10)
+float _ctxSpread = (ta.ema(close, 20) - _ema50) / math.max(_natr, 1e-10)
 float ctxTrend   = math.min(100.0, math.abs(_ctxSpread) * 40.0)
 string ctxRegime = ctxTrend > 50 ? (_ctxSpread > 0 ? "TRENDING UP" : "TRENDING DOWN") : ctxTrend > 25 ? "WEAK TREND" : "RANGING"
-float  _ctxMom   = (close - close[5]) / math.max(_atr, 1e-10)
+float  _ctxMom   = (close - close[5]) / math.max(_natr, 1e-10)
 string ctxMom    = _ctxMom > 1.5 ? "STRONG UP" : _ctxMom > 0.5 ? "UP" : _ctxMom < -1.5 ? "STRONG DOWN" : _ctxMom < -0.5 ? "DOWN" : "FLAT"
 float  _ctxVR    = ta.atr(14) / math.max(ta.atr(50), 1e-10)
 string ctxVol    = _ctxVR > 1.3 ? "EXPANDING" : _ctxVR < 0.8 ? "CONTRACTING" : "NORMAL"
-bool   _ctxSwHi  = high > ta.highest(high, 20)[1] and close < ta.highest(high, 20)[1]
-bool   _ctxSwLo  = low  < ta.lowest(low, 20)[1]  and close > ta.lowest(low, 20)[1]
+float  _ctxHH    = ta.highest(high, 20)[1]
+float  _ctxLL    = ta.lowest(low, 20)[1]
+bool   _ctxSwHi  = high > _ctxHH and close < _ctxHH
+bool   _ctxSwLo  = low  < _ctxLL and close > _ctxLL
 var int _ctxSweep = 0
 if _ctxSwHi
     _ctxSweep := 1
