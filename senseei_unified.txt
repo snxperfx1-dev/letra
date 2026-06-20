@@ -1035,28 +1035,32 @@ string waveNarr   = _cdpDir + " wave · " + str.tostring(math.round(waveProgress
 // ═══════════════════════════════════════════════════════════════════════════════
 float atkEntryPx = (not na(flipTop) and not na(flipBot)) ? (flipTop + flipBot) / 2.0 : na
 float atkStopPx  = se5_inv
-float atkTgtPx   = waveObj
+float atkT1Px    = waveObj      // primary objective (M5)
+float atkT2Px    = se15_tgt     // secondary objective (M15)
+float atkT3Px    = se60_tgt     // extended objective (H1)
 var bool atkEntered = false
-var bool atkTgtHit  = false
 var bool atkStopHit = false
+var bool atkT1Hit = false
+var bool atkT2Hit = false
+var bool atkT3Hit = false
 var int  _atkDirPrev = 0
 if direction != _atkDirPrev
     atkEntered := false
-    atkTgtHit  := false
     atkStopHit := false
+    atkT1Hit := false
+    atkT2Hit := false
+    atkT3Hit := false
     _atkDirPrev := direction
-if direction == 1 and not na(atkEntryPx) and low <= atkEntryPx
+if not na(atkEntryPx) and (direction == 1 ? low <= atkEntryPx : direction == -1 ? high >= atkEntryPx : false)
     atkEntered := true
-if direction == -1 and not na(atkEntryPx) and high >= atkEntryPx
-    atkEntered := true
-if direction == 1 and not na(atkTgtPx) and high >= atkTgtPx
-    atkTgtHit := true
-if direction == -1 and not na(atkTgtPx) and low <= atkTgtPx
-    atkTgtHit := true
-if direction == 1 and not na(atkStopPx) and close < atkStopPx
+if not na(atkStopPx) and (direction == 1 ? close < atkStopPx : direction == -1 ? close > atkStopPx : false)
     atkStopHit := true
-if direction == -1 and not na(atkStopPx) and close > atkStopPx
-    atkStopHit := true
+if not na(atkT1Px) and (direction == 1 ? high >= atkT1Px : direction == -1 ? low <= atkT1Px : false)
+    atkT1Hit := true
+if not na(atkT2Px) and (direction == 1 ? high >= atkT2Px : direction == -1 ? low <= atkT2Px : false)
+    atkT2Hit := true
+if not na(atkT3Px) and (direction == 1 ? high >= atkT3Px : direction == -1 ? low <= atkT3Px : false)
+    atkT3Hit := true
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // REGION-BASED DISPLAY AUTHORITY  (audit fix)
@@ -1665,20 +1669,26 @@ if barstate.islast
     // ══════════════════════════════════════════════════════════════════════════
     if showAttack
         if na(attack)
-            attack := table.new(position.bottom_center, 3, 4, bgcolor = color.new(#060a12, 6), frame_color = color.new(#fb7185, 28), frame_width = 2, border_width = 0)
+            attack := table.new(position.bottom_center, 3, 6, bgcolor = color.new(#060a12, 2), frame_color = color.new(#fb7185, 24), frame_width = 2, border_width = 1)
         string _atkDirTx = direction == 1 ? "LONG" : direction == -1 ? "SHORT" : "NO WAVE"
-        table.cell(attack, 0, 0, "⚔ ATTACK SEQUENCE", text_color = #ffe1e6, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#7f1d1d, 22))
-        table.cell(attack, 1, 0, _atkDirTx, text_color = vCol, text_size = size.normal, bgcolor = color.new(#7f1d1d, 22))
-        table.cell(attack, 2, 0, _liveDot, text_color = _pulse ? #34d399 : #475569, text_size = size.normal, bgcolor = color.new(#7f1d1d, 22))
-        table.cell(attack, 0, 1, "① ENTRY", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
-        table.cell(attack, 1, 1, na(atkEntryPx) ? "—" : str.tostring(math.round_to_mintick(atkEntryPx)), text_color = #e2e8f0, text_size = size.normal)
-        table.cell(attack, 2, 1, atkEntered ? "✓ DONE" : "○ PENDING", text_color = #060a12, text_size = size.normal, bgcolor = color.new(atkEntered ? #34d399 : #fb7185, 12))
-        table.cell(attack, 0, 2, "② STOP", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
-        table.cell(attack, 1, 2, na(atkStopPx) ? "—" : str.tostring(math.round_to_mintick(atkStopPx)), text_color = #e2e8f0, text_size = size.normal)
-        table.cell(attack, 2, 2, atkStopHit ? "✗ HIT" : "✓ SAFE", text_color = #060a12, text_size = size.normal, bgcolor = color.new(atkStopHit ? #fb7185 : #34d399, 12))
-        table.cell(attack, 0, 3, "③ TARGET", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
-        table.cell(attack, 1, 3, na(atkTgtPx) ? "—" : str.tostring(math.round_to_mintick(atkTgtPx)), text_color = #e2e8f0, text_size = size.normal)
-        table.cell(attack, 2, 3, atkTgtHit ? "✓ DONE" : "○ PENDING", text_color = #060a12, text_size = size.normal, bgcolor = color.new(atkTgtHit ? #34d399 : #fb7185, 12))
+        table.cell(attack, 0, 0, "⚔ ATTACK SEQUENCE", text_color = #ffe1e6, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#7f1d1d, 16))
+        table.cell(attack, 1, 0, _atkDirTx, text_color = vCol, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(#7f1d1d, 16))
+        table.cell(attack, 2, 0, "STATUS " + _liveDot, text_color = _pulse ? #34d399 : #94a3b8, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(#7f1d1d, 16))
+        table.cell(attack, 0, 1, "ENTRY", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(attack, 1, 1, na(atkEntryPx) ? "—" : str.tostring(math.round_to_mintick(atkEntryPx)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
+        table.cell(attack, 2, 1, atkEntered ? "✓ DONE" : "○ PENDING", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkEntered ? #34d399 : #fb7185, 10))
+        table.cell(attack, 0, 2, "STOP LOSS", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(attack, 1, 2, na(atkStopPx) ? "—" : str.tostring(math.round_to_mintick(atkStopPx)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
+        table.cell(attack, 2, 2, atkStopHit ? "✓ HIT" : "○ ACTIVE", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkStopHit ? #fb7185 : #475569, 10))
+        table.cell(attack, 0, 3, "TARGET 1", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(attack, 1, 3, na(atkT1Px) ? "—" : str.tostring(math.round_to_mintick(atkT1Px)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
+        table.cell(attack, 2, 3, atkT1Hit ? "✓ DONE" : "○ PENDING", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkT1Hit ? #34d399 : #fb7185, 10))
+        table.cell(attack, 0, 4, "TARGET 2", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(attack, 1, 4, na(atkT2Px) ? "—" : str.tostring(math.round_to_mintick(atkT2Px)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
+        table.cell(attack, 2, 4, atkT2Hit ? "✓ DONE" : "○ PENDING", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkT2Hit ? #34d399 : #fb7185, 10))
+        table.cell(attack, 0, 5, "TARGET 3", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(attack, 1, 5, na(atkT3Px) ? "—" : str.tostring(math.round_to_mintick(atkT3Px)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
+        table.cell(attack, 2, 5, atkT3Hit ? "✓ DONE" : "○ PENDING", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkT3Hit ? #34d399 : #fb7185, 10))
 
 // ── Alerts (global scope) ─────────────────────────────────────────────────────
 alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")
