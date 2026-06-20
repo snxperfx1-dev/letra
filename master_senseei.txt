@@ -1,0 +1,188 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// MASTER SENSEEI  V2.0 — META-INTELLIGENCE / CHIEF STRATEGIST LAYER
+// Top layer above LETRA + Invisible Network. It OWNS NOTHING — no wave / FU /
+// flip / node / probability detection. It RECEIVES the engines' published
+// signals, decides what matters most right now, and compresses everything into
+// a single market narrative + directive.
+//
+//   LETRA            answers  "Where am I?"            (wave / phase / resolution)
+//   Invisible Network answers "Who is communicating?"  (node graph / bias)
+//   MASTER SENSEEI   answers  "What matters, and what should I do?"
+//
+// ── HOW TO CONNECT (one-time) ─────────────────────────────────────────────────
+//  Put LETRA, Invisible Network AND Master Senseei on the same chart, then in
+//  Senseei → Settings → Connections, link each source to the matching plot:
+//     Letra → Direction   = Letra: "Letra Dir"        Letra → Resolution = "Letra Resolution"
+//     Letra → Stack Dir   = Letra: "Letra Stack Dir"  Letra → Residual   = "Letra Residual"
+//     Letra → Stack %     = Letra: "Letra Stack %"     Letra → Attractor  = "Letra Attractor"
+//     Letra → Completion  = Letra: "Letra Completion"
+//     Network → Bias      = Invisible Network: "IN Bias"
+//     Network → Nodes     = Invisible Network: "IN Nodes"
+//     Network → Pressure  = Invisible Network: "IN Pressure"
+//  Unlinked sources stay = close and are auto-detected as "not linked".
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("Master Senseei", overlay = true, max_labels_count = 50)
+
+// ── INPUT BUS (Connections) ──────────────────────────────────────────────────
+string GC = "Connections — link to LETRA & Invisible Network"
+float sLDir   = input.source(close, "Letra → Direction (-1/0/1)",    group = GC)
+float sLSDir  = input.source(close, "Letra → Stack Direction",       group = GC)
+float sLSPct  = input.source(close, "Letra → Stack Strength %",      group = GC)
+float sLRes   = input.source(close, "Letra → Resolution (0/1/2)",    group = GC)
+float sLResid = input.source(close, "Letra → Residual energy %",     group = GC)
+float sLAttr  = input.source(close, "Letra → Attractor strength %",  group = GC)
+float sLComp  = input.source(close, "Letra → Completion %",          group = GC)
+float sNBias  = input.source(close, "Network → Bias (-1/0/1)",       group = GC)
+float sNNodes = input.source(close, "Network → Node count",          group = GC)
+float sNPress = input.source(close, "Network → Pressure (-100..100)",group = GC)
+
+string GS = "Senseei"
+bool   showPanel   = input.bool(true,  "Show Chief Strategist panel",  group = GS)
+bool   showVerdict = input.bool(true,  "Show verdict label on chart",  group = GS)
+int    minConf     = input.int (55,    "Min confidence to ATTACK",     group = GS, minval = 0, maxval = 100)
+string panelPos    = input.string("Top Left", "Panel position", options = ["Top Left", "Middle Left", "Bottom Left"], group = GS)
+
+// ── Link detection (unlinked input.source keeps its default = close) ─────────
+bool letraOn = sLDir != close or sLSDir != close or sLRes != close or sLAttr != close
+bool netOn   = sNBias != close or sNNodes != close or sNPress != close
+bool anyOn   = letraOn or netOn
+bool bothOn  = letraOn and netOn
+
+f_sgn(float _x) => _x > 0.3 ? 1 : _x < -0.3 ? -1 : 0
+f_clamp(float _x, float _lo, float _hi) => math.max(_lo, math.min(_hi, _x))
+f_lit(float _x, float _lo, float _hi) => _x != close and _x >= _lo and _x <= _hi   // a real, in-range linked value
+
+// ── Normalised bus ───────────────────────────────────────────────────────────
+int   Ldir   = letraOn ? (f_sgn(sLDir) != 0 ? f_sgn(sLDir) : f_sgn(sLSDir)) : 0
+float Lstk   = f_lit(sLSPct,  0, 100) ? sLSPct  : 50.0
+int   Lres   = f_lit(sLRes,   0, 2)   ? int(math.round(sLRes)) : -1     // -1 = unknown
+float Lresid = f_lit(sLResid, 0, 100) ? sLResid : 0.0
+float Lattr  = f_lit(sLAttr,  0, 100) ? sLAttr  : 0.0
+float Lcomp  = f_lit(sLComp,  0, 100) ? sLComp  : na
+int   Nbias  = netOn ? f_sgn(sNBias) : 0
+float Nnodes = f_lit(sNNodes, 0, 1000) ? sNNodes : 0.0
+float Npress = f_lit(sNPress, -100, 100) ? sNPress : 0.0
+int   Npdir  = f_sgn(Npress / 40.0)
+
+// Self EMA context — only used if NOTHING is linked yet, so the panel still reads.
+int   ownDir = close > ta.ema(close, 50) ? 1 : close < ta.ema(close, 50) ? -1 : 0
+
+// ════════════════════════════════════════════════════════════════════════════
+// ALIGNMENT + CONTRADICTION ENGINES — directional consensus across the engines
+// ════════════════════════════════════════════════════════════════════════════
+int _v1 = letraOn ? Ldir  : 0
+int _v2 = letraOn ? f_sgn(sLSDir) : 0
+int _v3 = netOn   ? Nbias : 0
+int _v4 = netOn   ? Npdir : 0
+int _voteSum   = _v1 + _v2 + _v3 + _v4 + (anyOn ? 0 : ownDir)
+int master     = _voteSum > 0 ? 1 : _voteSum < 0 ? -1 : 0
+int _votesCast = (_v1 != 0 ? 1 : 0) + (_v2 != 0 ? 1 : 0) + (_v3 != 0 ? 1 : 0) + (_v4 != 0 ? 1 : 0)
+int _votesFor  = (_v1 == master and _v1 != 0 ? 1 : 0) + (_v2 == master and _v2 != 0 ? 1 : 0) + (_v3 == master and _v3 != 0 ? 1 : 0) + (_v4 == master and _v4 != 0 ? 1 : 0)
+int _votesAgn  = _votesCast - _votesFor
+float alignment = _votesCast > 0 ? _votesFor / _votesCast * 100.0 : (anyOn ? 50.0 : 0.0)
+float conflict  = _votesCast > 0 ? _votesAgn / _votesCast * 100.0 : 0.0
+
+// ════════════════════════════════════════════════════════════════════════════
+// THREAT ENGINE — residual (unfinished) energy + conflict + opposing network
+// ════════════════════════════════════════════════════════════════════════════
+float threat = f_clamp(conflict * 0.45 + Lresid * 0.30 + (Npdir != 0 and Npdir != master ? 20.0 : 0.0) + (Lres == 1 ? 12.0 : 0.0), 0, 100)
+
+// ════════════════════════════════════════════════════════════════════════════
+// CONFIDENCE ENGINE
+// ════════════════════════════════════════════════════════════════════════════
+float confidence = f_clamp(alignment * 0.45 + Lstk * 0.20 + Lattr * 0.15 + math.min(20.0, Nnodes / 3.0) - threat * 0.20, 0, 100)
+
+// ════════════════════════════════════════════════════════════════════════════
+// TIMING ENGINE — from recursive completion (how far through the cycle)
+// ════════════════════════════════════════════════════════════════════════════
+string timing = Lres == 2 ? "RESOLVED" : na(Lcomp) ? "—" : Lcomp < 15 ? "VERY EARLY" : Lcomp < 35 ? "EARLY" : Lcomp < 55 ? "DEVELOPING" : Lcomp < 78 ? "MID CYCLE" : Lcomp < 96 ? "LATE" : "TERMINAL"
+
+// ════════════════════════════════════════════════════════════════════════════
+// INTENT ENGINE — what price is trying to accomplish (energy language)
+// ════════════════════════════════════════════════════════════════════════════
+string intent = master == 0 ? "BALANCE" : conflict > 55 ? "ABSORPTION" : Lres == 2 ? "ROTATION" : Lres == 1 ? "RESOLUTION" : (timing == "VERY EARLY" or timing == "EARLY") ? "EXPANSION" : (timing == "MID CYCLE" or timing == "DEVELOPING") ? "CONTINUATION" : (timing == "LATE" or timing == "TERMINAL") ? "DELIVERY" : "CONTINUATION"
+
+// ════════════════════════════════════════════════════════════════════════════
+// OPPORTUNITY ENGINE
+// ════════════════════════════════════════════════════════════════════════════
+float oppScore = f_clamp(alignment * 0.40 + Lattr * 0.30 + Lstk * 0.30 - threat * 0.35, 0, 100)
+string opportunity = master == 0 ? "NONE" : conflict > 60 ? "DEVELOPING" : oppScore < 20 ? "NONE" : oppScore < 40 ? "DEVELOPING" : oppScore < 62 ? "GOOD" : oppScore < 82 ? "STRONG" : "EXCEPTIONAL"
+
+// ════════════════════════════════════════════════════════════════════════════
+// ACTION ENGINE
+// ════════════════════════════════════════════════════════════════════════════
+string action = master == 0 ? "WAIT" : conflict > 60 ? "WAIT" : Lres == 2 ? "MANAGE / EXIT" : (opportunity == "STRONG" or opportunity == "EXCEPTIONAL") and confidence >= minConf and threat < 45 ? "ATTACK" : (opportunity == "GOOD" or opportunity == "STRONG") ? "PREPARE" : "WAIT"
+
+// ════════════════════════════════════════════════════════════════════════════
+// LANGUAGE / STORY ENGINE — never says "bullish"; speaks in energy terms
+// ════════════════════════════════════════════════════════════════════════════
+string _energyLine = master == 1 ? "Expansion remains in control." : master == -1 ? "Downside delivery remains in control." : "Energy is balanced — no clean control."
+string _resLine = Lres == 2 ? "The process has RESOLVED — energy fully cleaned." : Lres == 1 ? "The process is PARTIALLY resolved — cleaning incomplete." : Lres == 0 ? "Primary structure remains UNRESOLVED — energy uncleaned." : "Resolution state unknown (link Letra)."
+string _attrLine = Lattr >= 60 ? "A strong unresolved attractor is pulling price." : Lattr >= 35 ? "A moderate attractor is active." : "No dominant attractor."
+string _netLine = netOn ? ("Network: " + str.tostring(math.round(Nnodes)) + " live structures, " + (Npdir == master and master != 0 ? "agreeing" : Npdir != 0 and Npdir != master ? "opposing" : "neutral") + ".") : "Network not linked."
+string _threatLine = threat < 25 ? "Threat low." : threat < 55 ? "Threat moderate." : "Threat high — competing energy."
+string story = _energyLine + " " + _resLine + " " + _attrLine + " " + _netLine + " " + _threatLine
+
+// WHAT MATTERS — top relevance items by gravity
+string matters = ""
+matters := matters + (Lattr  >= 50 ? "Primary attractor · "  : "")
+matters := matters + (Lresid >= 45 ? "Residual energy · "    : "")
+matters := matters + (Lres == 0    ? "Unresolved structure · ": "")
+matters := matters + (netOn and Nnodes >= 18 ? "Network conversation · " : "")
+matters := matters == "" ? "Awaiting a dominant structure" : str.replace_all(matters, " · ", "\n• ")
+matters := "• " + matters
+
+// WHAT NO LONGER MATTERS
+string nomatter = ""
+nomatter := nomatter + (Lres == 2     ? "Completed structure · " : "")
+nomatter := nomatter + (threat < 22   ? "Reversal threat · "     : "")
+nomatter := nomatter + (alignment >= 72 ? "Opposing path · "     : "")
+nomatter := nomatter + (conflict < 18 ? "Minor pullback · "      : "")
+nomatter := nomatter == "" ? "—" : str.replace_all(nomatter, " · ", "\n• ")
+nomatter := nomatter == "—" ? "—" : "• " + nomatter
+
+color  vCol = master == 1 ? #00e676 : master == -1 ? #ff5252 : color.gray
+color  aCol = action == "ATTACK" ? #00e676 : action == "PREPARE" ? color.yellow : str.startswith(action, "MANAGE") ? #29b6f6 : color.gray
+
+// ── Verdict label (right of price) ───────────────────────────────────────────
+var label vLbl = na
+if showVerdict and barstate.islast
+    if not na(vLbl)
+        label.delete(vLbl)
+    vLbl := label.new(bar_index + 3, close, "SENSEEI  " + action + "   " + intent + "  " + str.tostring(math.round(confidence)) + "%", style = label.style_label_left, color = color.new(aCol, 8), textcolor = color.white, size = size.large)
+
+// ── CHIEF STRATEGIST PANEL ───────────────────────────────────────────────────
+var table mp = na
+if showPanel and barstate.islast
+    if na(mp)
+        mp := table.new(panelPos == "Top Left" ? position.top_left : panelPos == "Bottom Left" ? position.bottom_left : position.middle_left, 2, 12, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#ffd000, 30), frame_width = 2, border_width = 0)
+    table.cell(mp, 0, 0, "◆ MASTER SENSEEI", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
+    table.cell(mp, 1, 0, anyOn ? "live" : "link sources →", text_color = anyOn ? #00e676 : color.gray, text_size = size.small, text_halign = text.align_right)
+    table.cell(mp, 0, 1, "CURRENT STORY", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 1, "", text_size = size.small)
+    table.cell(mp, 0, 2, story, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 2, "", text_size = size.small)
+    table.cell(mp, 0, 3, "WHAT MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+    table.cell(mp, 1, 3, "", text_size = size.small)
+    table.cell(mp, 0, 4, matters, text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 4, "", text_size = size.small)
+    table.cell(mp, 0, 5, "WHAT NO LONGER MATTERS", text_color = #ff7fe6, text_size = size.small, text_halign = text.align_left)
+    table.cell(mp, 1, 5, "", text_size = size.small)
+    table.cell(mp, 0, 6, nomatter, text_color = color.new(color.silver, 20), text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 6, "", text_size = size.small)
+    table.cell(mp, 0, 7, "PRIMARY INTENT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 7, intent, text_color = vCol, text_size = size.normal)
+    table.cell(mp, 0, 8, "ALIGNMENT / CONFLICT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 8, str.tostring(math.round(alignment)) + "% / " + str.tostring(math.round(conflict)) + "%", text_color = alignment >= 60 ? #00e676 : color.yellow, text_size = size.normal)
+    table.cell(mp, 0, 9, "CONFIDENCE / THREAT", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 9, str.tostring(math.round(confidence)) + "% / " + str.tostring(math.round(threat)) + "%", text_color = confidence >= minConf and threat < 45 ? #00e676 : color.yellow, text_size = size.normal)
+    table.cell(mp, 0, 10, "OPPORTUNITY / TIMING", text_color = color.silver, text_size = size.normal, text_halign = text.align_left)
+    table.cell(mp, 1, 10, opportunity + " · " + timing, text_color = opportunity == "STRONG" or opportunity == "EXCEPTIONAL" ? #00e676 : color.white, text_size = size.normal)
+    table.cell(mp, 0, 11, "ACTION", text_color = #ffd000, text_size = size.large, text_halign = text.align_left)
+    table.cell(mp, 1, 11, action, text_color = aCol, text_size = size.large)
+
+// ── Alerts ───────────────────────────────────────────────────────────────────
+alertcondition(action == "ATTACK" and master ==  1, "Senseei ATTACK Long",  "Master Senseei: ATTACK — long, engines aligned")
+alertcondition(action == "ATTACK" and master == -1, "Senseei ATTACK Short", "Master Senseei: ATTACK — short, engines aligned")
+alertcondition(conflict > 60, "Senseei CONFLICT", "Master Senseei: engines in conflict — stand aside")

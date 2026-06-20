@@ -1,0 +1,754 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════════
+// INVISIBLE NETWORK  (Engine 0 / 1A.13 / 2.0 / 3.0 CIN / WEB MODE 1.0)  —  FU graph
+// ───────────────────────────────────────────────────────────────────────────────
+// Price is not moving between swings or BOS — it moves between remembered
+// manipulations (validated FU candles). This indicator scans every timeframe
+// (M1 → Monthly), remembers each validated FU as a persistent network NODE
+// (ACTIVE → DORMANT → CONSUMED → HISTORICAL, with revisit counting), ranks them by
+// authority, reconstructs the live CONVERSATION between them, marks the FEZ
+// corridor price oscillates in, and draws the CURRENT route, an ALTERNATIVE/AFE
+// route and the PREVIOUS trail as timeframe-colored arrows, with a network panel.
+// ═══════════════════════════════════════════════════════════════════════════════
+indicator("Invisible Network", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+string GRP = "Invisible Network"
+bool   webMode      = input.bool (true,  "WEB MODE (master) — map the network", group = GRP, tooltip = "Web Mode is purely informational. It observes the invisible network of FU/flip conversations and never alters detection. Turn off to hide the entire network overlay.")
+float  wickFrac     = input.float(0.3, "FU spike: min wick / range",        group = GRP, minval = 0.15, maxval = 0.9, step = 0.05)
+int    lookback     = input.int  (3,   "FU spike: structure lookback",      group = GRP, minval = 2, maxval = 30)
+int    authMin      = input.int  (45,  "Min node authority to show",        group = GRP, minval = 0, maxval = 120)
+int    routeMinConf = input.int  (35,  "Min path confidence % (route)",     group = GRP, minval = 0, maxval = 100)
+int    nodeMax      = input.int  (250, "Max remembered nodes",              group = GRP, minval = 10, maxval = 500)
+bool   showLevels   = input.bool (true,  "Show network levels",             group = GRP)
+bool   showConsumed = input.bool (true,  "Show CONSUMED / historical nodes (faint)", group = GRP)
+bool   showConversations = input.bool (true, "Show CONVERSATIONS (dashed web)", group = GRP, tooltip = "Physically draws the node-to-node money-flow conversations as light dashed edges in the right margin: how upper/lower FUs and flip zones talk to each other.")
+int    webMaxEdges  = input.int  (60,  "Conversation web — max edges",     group = GRP, minval = 5, maxval = 200, tooltip = "How many of the strongest nodes the conversation web connects. Raise to see MORE conversations; lower to keep it clean.")
+bool   showFlips    = input.bool (true,  "Show FLIP zones (Web 1.1)",       group = GRP)
+bool   tfColors     = input.bool (true,  "Color nodes by timeframe (Engine 2.8)", group = GRP)
+bool   showFEZ      = input.bool (true,  "Show FEZ corridor (Engine 2.5)",  group = GRP)
+bool   showCurPath  = input.bool (true,  "Show CURRENT path (forward route)",group = GRP)
+bool   showAltPath  = input.bool (true,  "Show ALTERNATIVE path / AFE (dashed)", group = GRP)
+bool   showPrevPath = input.bool (true,  "Show PREVIOUS path (trail behind)",group = GRP)
+bool   showPanel    = input.bool (true,  "Show conversation panel",         group = GRP)
+bool   showCoPilot  = input.bool (true,  "Show CO-PILOT panel (bottom-right)", group = GRP, tooltip = "Live read-out: where price is, the most likely path and its next nodes, the alternate/counter paths with probabilities, and a plain-language note on the interaction price is currently attempting.")
+int    dormantBars  = input.int  (120, "Bars until DORMANT",                group = GRP, minval = 20, maxval = 2000)
+int    historyBars  = input.int  (600, "Bars until HISTORICAL",             group = GRP, minval = 100, maxval = 5000)
+
+// ── Cross-TF guard. Pine cannot cheaply pull a *lower* timeframe's full history
+//    onto a *higher* chart (it breaks/zeroes detection on Daily+), so any TF
+//    below the chart is clamped up to the chart TF and then skipped as a
+//    duplicate (see _ok* flags below). Net effect: the network always populates
+//    from the chart TF upward — on M1 you get M1→W (the full network); on H4 you
+//    get H4→W; on Daily you get D→W. Lower charts = richer network. ──
+f_safeTF(simple string _tf) => timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+// ── FU pool detector (runs per requested timeframe) ──────────────────────────
+// FU = a spike through local structure (prior `_lb`-bar high/low) that closes
+// back inside ("the middle finger"). The node EXISTS on formation (so detection
+// is reliable); a later close beyond the candle body "confirms" it and adds to
+// authority. Returns tip, midpoint, direction, present-flag and authority score.
+f_fuPool(simple float _wf, simple int _lb) =>
+    var float _tip  = na
+    var float _bH   = na
+    var float _bL   = na
+    var float _mid  = na
+    var int   _dir  = 0
+    var bool  _have = false
+    var bool  _conf = false
+    float _rng = math.max(high - low, 1e-10)
+    float _pHi = ta.highest(high, _lb)[1]
+    float _pLo = ta.lowest(low,  _lb)[1]
+    float _uw  = (high - math.max(open, close)) / _rng     // upper-wick fraction
+    float _lw  = (math.min(open, close) - low)  / _rng     // lower-wick fraction
+    bool  _localTop = high >= ta.highest(high, _lb)        // this bar is the local high
+    bool  _localBot = low  <= ta.lowest(low,  _lb)         // this bar is the local low
+    // FU / FLIP = a dominant rejection wick at a local extreme. It now counts
+    // whether the bar SWEPT prior structure (the classic FU spike) OR simply
+    // REJECTED at a local extreme (an ordinary flip zone). The old logic required
+    // a clean sweep + close-back-inside, which missed most real flips — this
+    // captures far more genuine structures so the conversation web fills in.
+    bool  _bear = _uw >= _wf and ((not na(_pHi) and high >= _pHi and close < _pHi) or (_localTop and close < open))
+    bool  _bull = _lw >= _wf and ((not na(_pLo) and low  <= _pLo and close > _pLo) or (_localBot and close > open))
+    if _bear
+        _dir  := -1
+        _tip  := high
+        _bH   := math.max(open, close)
+        _bL   := math.min(open, close)
+        _mid  := _bH + (_tip - _bH) * 0.5
+        _have := true
+        _conf := false
+    else if _bull
+        _dir  := 1
+        _tip  := low
+        _bH   := math.max(open, close)
+        _bL   := math.min(open, close)
+        _mid  := _tip + (_bL - _tip) * 0.5
+        _have := true
+        _conf := false
+    if _have and _dir == -1 and not _conf and close < _bL
+        _conf := true
+    if _have and _dir ==  1 and not _conf and close > _bH
+        _conf := true
+    float _wk = (_dir == -1 and _have) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and _have) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    float _score = 20.0 + math.min(25.0, _wk * 15.0) + (_conf ? 30.0 : 0.0) + (_wk > 1.0 ? 15.0 : 0.0) + (_wk > 1.5 ? 10.0 : 0.0)
+    [_have ? _tip : na, _mid, _dir, _have ? 1 : 0, _score]
+
+// ── Scan all nine timeframes (MN → M1) ───────────────────────────────────────
+[mnTip,  mnMid,  mnDir,  mnV,  mnSc]  = request.security(syminfo.tickerid, f_safeTF("M"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[wTip,   wMid,   wDir,   wV,   wSc]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[dTip,   dMid,   dDir,   dV,   dSc]   = request.security(syminfo.tickerid, f_safeTF("D"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h4Tip,  h4Mid,  h4Dir,  h4V,  h4Sc]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[h1Tip,  h1Mid,  h1Dir,  h1V,  h1Sc]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m15Tip, m15Mid, m15Dir, m15V, m15Sc] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m5Tip,  m5Mid,  m5Dir,  m5V,  m5Sc]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m3Tip,  m3Mid,  m3Dir,  m3V,  m3Sc]  = request.security(syminfo.tickerid, f_safeTF("3"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+[m1Tip,  m1Mid,  m1Dir,  m1V,  m1Sc]  = request.security(syminfo.tickerid, f_safeTF("1"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
+
+// ── Native chart-resolution scan. Runs f_fuPool directly on the chart's own
+//    candles every bar, so EVERY historical FU on the viewed timeframe becomes
+//    a node — dense history on any chart TF (not just standard ones). The chart
+//    TF itself is served by this; the fixed scans below only add STRICTLY-higher
+//    context (see _ok* flags, which now require the TF to be above the chart). ─
+[cTip, cMid, cDir, cV, cSc] = f_fuPool(wickFrac, lookback)
+
+// ── Bias: the highest-timeframe live validated FU sets the directional context;
+//    fall back to a 50-EMA slope when no FU is active. ─────────────────────────
+float _ema = ta.ema(close, 50)
+int   _trendBias = close > _ema ? 1 : close < _ema ? -1 : 0
+int   netBias =
+     nz(mnV)  == 1 ? nz(mnDir)  :
+     nz(wV)   == 1 ? nz(wDir)   :
+     nz(dV)   == 1 ? nz(dDir)   :
+     nz(h4V)  == 1 ? nz(h4Dir)  :
+     nz(h1V)  == 1 ? nz(h1Dir)  :
+     nz(m15V) == 1 ? nz(m15Dir) :
+     nz(m5V)  == 1 ? nz(m5Dir)  : _trendBias
+
+// ── Persistent network registry — nodes are never deleted, only transitioned.
+//    state: 0 ACTIVE · 1 DORMANT · 2 CONSUMED · 3 HISTORICAL ──────────────────
+var array<float> nPx    = array.new_float()
+var array<float> nMid   = array.new_float()
+var array<int>   nDir   = array.new_int()
+var array<float> nSc    = array.new_float()
+var array<int>   nWt    = array.new_int()    // timeframe authority weight 1..9 (M1..MN)
+var array<int>   nState = array.new_int()
+var array<int>   nBar   = array.new_int()
+var array<int>   nRev   = array.new_int()
+
+f_wtTf(int _wt) => _wt == 9 ? "MN" : _wt == 8 ? "W" : _wt == 7 ? "D" : _wt == 6 ? "H4" : _wt == 5 ? "H1" : _wt == 4 ? "M15" : _wt == 3 ? "M5" : _wt == 2 ? "M3" : "M1"
+
+// Engine 2.8 — cross-TF color matrix: every timeframe has its own hue.
+f_tfColor(int _wt) => _wt == 9 ? color.white : _wt == 8 ? #ffd000 : _wt == 7 ? #ffe96b : _wt == 6 ? #22d3ee : _wt == 5 ? #b388ff : _wt == 4 ? #5a8bff : _wt == 3 ? #5aff9e : _wt == 2 ? #9ef0c0 : color.gray
+
+// Co-pilot helper — compact label for a node index ("H1 ▲ 4123.5"), or "—".
+f_cpNode(int _i) => _i < 0 ? "—" : f_wtTf(array.get(nWt, _i)) + " " + (array.get(nDir, _i) == 1 ? "▲" : "▼") + " " + str.tostring(math.round_to_mintick(array.get(nPx, _i)))
+
+f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
+    array.push(nPx, _tip)
+    array.push(nMid, _mid)
+    array.push(nDir, _dir)
+    array.push(nSc, _sc)
+    array.push(nWt, _wt)
+    array.push(nState, 0)
+    array.push(nBar, bar_index)
+    array.push(nRev, 0)
+    if array.size(nPx) > nodeMax
+        array.shift(nPx)
+        array.shift(nMid)
+        array.shift(nDir)
+        array.shift(nSc)
+        array.shift(nWt)
+        array.shift(nState)
+        array.shift(nBar)
+        array.shift(nRev)
+
+// Remember a NEW validated FU per timeframe (tip change = a freshly born node).
+// The chart TF is served by the NATIVE scan below; the fixed scans only add
+// timeframes STRICTLY ABOVE the chart (so no duplicate of the native chart node).
+int  _chartSec = timeframe.in_seconds()
+int  _chartWt  = _chartSec >= timeframe.in_seconds("M") ? 9 : _chartSec >= timeframe.in_seconds("W") ? 8 : _chartSec >= timeframe.in_seconds("D") ? 7 : _chartSec >= 14400 ? 6 : _chartSec >= 3600 ? 5 : _chartSec >= 900 ? 4 : _chartSec >= 300 ? 3 : _chartSec >= 180 ? 2 : 1
+bool _okMN  = timeframe.in_seconds("M")   > _chartSec
+bool _okW   = timeframe.in_seconds("W")   > _chartSec
+bool _okD   = timeframe.in_seconds("D")   > _chartSec
+bool _okH4  = timeframe.in_seconds("240") > _chartSec
+bool _okH1  = timeframe.in_seconds("60")  > _chartSec
+bool _okM15 = timeframe.in_seconds("15")  > _chartSec
+bool _okM5  = timeframe.in_seconds("5")   > _chartSec
+bool _okM3  = timeframe.in_seconds("3")   > _chartSec
+bool _okM1  = timeframe.in_seconds("1")   > _chartSec
+var float _pvW   = na
+var float _pvD   = na
+var float _pvH4  = na
+var float _pvH1  = na
+var float _pvM15 = na
+var float _pvM5  = na
+var float _pvM3  = na
+var float _pvM1  = na
+var float _pvMN  = na
+var float _pvChart = na
+// Native chart-TF node — dense per-bar historical detection on the viewed TF.
+if cV == 1 and not na(cTip) and (na(_pvChart) or cTip != _pvChart)
+    f_nodeAdd(cTip, cMid, nz(cDir), nz(cSc), _chartWt)
+    _pvChart := cTip
+if _okMN and nz(mnV)  == 1 and not na(mnTip)  and (na(_pvMN)  or mnTip  != _pvMN)
+    f_nodeAdd(mnTip,  mnMid,  nz(mnDir),  nz(mnSc),  9)
+    _pvMN := mnTip
+if _okW and nz(wV)   == 1 and not na(wTip)   and (na(_pvW)   or wTip   != _pvW)
+    f_nodeAdd(wTip,   wMid,   nz(wDir),   nz(wSc),   8)
+    _pvW := wTip
+if _okD and nz(dV)   == 1 and not na(dTip)   and (na(_pvD)   or dTip   != _pvD)
+    f_nodeAdd(dTip,   dMid,   nz(dDir),   nz(dSc),   7)
+    _pvD := dTip
+if _okH4 and nz(h4V)  == 1 and not na(h4Tip)  and (na(_pvH4)  or h4Tip  != _pvH4)
+    f_nodeAdd(h4Tip,  h4Mid,  nz(h4Dir),  nz(h4Sc),  6)
+    _pvH4 := h4Tip
+if _okH1 and nz(h1V)  == 1 and not na(h1Tip)  and (na(_pvH1)  or h1Tip  != _pvH1)
+    f_nodeAdd(h1Tip,  h1Mid,  nz(h1Dir),  nz(h1Sc),  5)
+    _pvH1 := h1Tip
+if _okM15 and nz(m15V) == 1 and not na(m15Tip) and (na(_pvM15) or m15Tip != _pvM15)
+    f_nodeAdd(m15Tip, m15Mid, nz(m15Dir), nz(m15Sc), 4)
+    _pvM15 := m15Tip
+if _okM5 and nz(m5V)  == 1 and not na(m5Tip)  and (na(_pvM5)  or m5Tip  != _pvM5)
+    f_nodeAdd(m5Tip,  m5Mid,  nz(m5Dir),  nz(m5Sc),  3)
+    _pvM5 := m5Tip
+if _okM3 and nz(m3V)  == 1 and not na(m3Tip)  and (na(_pvM3)  or m3Tip  != _pvM3)
+    f_nodeAdd(m3Tip,  m3Mid,  nz(m3Dir),  nz(m3Sc),  2)
+    _pvM3 := m3Tip
+if _okM1 and nz(m1V)  == 1 and not na(m1Tip)  and (na(_pvM1)  or m1Tip  != _pvM1)
+    f_nodeAdd(m1Tip,  m1Mid,  nz(m1Dir),  nz(m1Sc),  1)
+    _pvM1 := m1Tip
+
+// State transitions + revisit counting (every bar, to maintain memory).
+float _atr = ta.atr(14)
+if array.size(nPx) > 0
+    for _i = 0 to array.size(nPx) - 1
+        if array.get(nState, _i) != 2
+            float _np  = array.get(nPx, _i)
+            int   _nd  = array.get(nDir, _i)
+            int   _age = bar_index - array.get(nBar, _i)
+            if (_nd == -1 ? close > _np : close < _np)
+                array.set(nState, _i, 2)                         // CONSUMED — price CLOSED through it (survives wicks/sweeps)
+            else
+                if math.abs(close - _np) < _atr * 0.25
+                    array.set(nRev, _i, array.get(nRev, _i) + 1) // revisit (defense) raises authority
+                int _wtn = array.get(nWt, _i)                    // age scaled by TF: HTF nodes live far longer
+                array.set(nState, _i, _age > historyBars * _wtn ? 3 : _age > dormantBars * _wtn ? 1 : 0)
+
+// Effective authority = sub-score + timeframe weight*4 + revisits*3.
+f_auth(int _i) => array.get(nSc, _i) + array.get(nWt, _i) * 4.0 + array.get(nRev, _i) * 3.0
+
+// Magnet score = authority + proximity + bias-alignment + untouched/recursion.
+f_magnet(int _i) =>
+    float _d  = math.abs(close - array.get(nPx, _i)) / math.max(_atr, 1e-10)
+    float _db = math.max(0.0, 30.0 - _d * 3.0)
+    float _ab = (array.get(nDir, _i) == netBias and netBias != 0) ? 15.0 : 0.0
+    float _ub = array.get(nRev, _i) == 0 ? 10.0 : math.min(20.0, array.get(nRev, _i) * 3.0)
+    f_auth(_i) * 0.5 + _db + _ab + _ub
+
+// Collect eligible open nodes on one side of price, sorted nearest-first.
+//   _aheadSide = true  → nodes in the bias direction (where price is GOING)
+//   _aheadSide = false → nodes opposite the bias (the trail price CAME FROM)
+f_pathNodes(bool _aheadSide) =>
+    array<int> _r = array.new_int()
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            float _np    = array.get(nPx, _i)
+            bool  _ahead = netBias == 1 ? _np > close : _np < close
+            if array.get(nState, _i) != 2 and f_auth(_i) >= authMin and (_aheadSide ? _ahead : not _ahead)
+                array.push(_r, _i)
+    if array.size(_r) > 1
+        for _a = 1 to array.size(_r) - 1
+            int   _key = array.get(_r, _a)
+            float _kd  = math.abs(close - array.get(nPx, _key))
+            int   _b   = _a - 1
+            bool  _go  = _b >= 0
+            while _go
+                if math.abs(close - array.get(nPx, array.get(_r, _b))) > _kd
+                    array.set(_r, _b + 1, array.get(_r, _b))
+                    _b -= 1
+                    _go := _b >= 0
+                else
+                    _go := false
+            array.set(_r, _b + 1, _key)
+    _r
+
+// FUTURE engine — the highest-timeframe objective node on one side of price
+// (timeframe weight dominates, authority breaks ties). This links the near-term
+// path to the larger HTF story: where price continues AFTER the current/alternate
+// path completes. _ahead=true → bias direction; false → opposite. _skip excludes
+// the immediate node so a genuinely higher/further objective is returned.
+f_htfNode(bool _ahead, int _skip) =>
+    int   _best = -1
+    float _rank = -1.0
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            // include CONSUMED / historical nodes too — swept HTF structures are
+            // valid future objectives (re-tests), so the story links to all real
+            // higher-TF nodes, not just untouched ones.
+            if _i != _skip
+                float _np = array.get(nPx, _i)
+                bool  _onSide = netBias == -1 ? (_ahead ? _np < close : _np > close) : (_ahead ? _np > close : _np < close)
+                if _onSide
+                    float _r2 = array.get(nWt, _i) * 1000.0 + f_auth(_i)
+                    if _r2 > _rank
+                        _rank := _r2
+                        _best := _i
+    _best
+
+// ── Drawing objects (cleared & rebuilt on the last bar) ──────────────────────
+var array<line>  route_lines = array.new<line>()
+var array<line>  conv_lines  = array.new<line>()
+var array<line>  level_lines = array.new<line>()
+var array<label> level_lbls  = array.new<label>()
+var array<box>   flip_boxes  = array.new<box>()
+var label        route_lbl   = na
+var label        prev_lbl    = na
+var label        alt_lbl     = na
+var box          fez_box     = na
+var label        fez_lbl     = na
+var table        netPanel    = na
+var table        coPilot     = na
+
+// WEB MODE is a purely informational overlay layer that sits ABOVE detection:
+// the node registry / states are always maintained above; this block only
+// observes and renders. Turning Web Mode off hides the network, nothing else.
+if barstate.islast and webMode
+    if array.size(route_lines) > 0
+        for _i = 0 to array.size(route_lines) - 1
+            line.delete(array.get(route_lines, _i))
+        array.clear(route_lines)
+    if array.size(conv_lines) > 0
+        for _i = 0 to array.size(conv_lines) - 1
+            line.delete(array.get(conv_lines, _i))
+        array.clear(conv_lines)
+    if array.size(level_lines) > 0
+        for _i = 0 to array.size(level_lines) - 1
+            line.delete(array.get(level_lines, _i))
+        array.clear(level_lines)
+    if array.size(level_lbls) > 0
+        for _i = 0 to array.size(level_lbls) - 1
+            label.delete(array.get(level_lbls, _i))
+        array.clear(level_lbls)
+    if array.size(flip_boxes) > 0
+        for _i = 0 to array.size(flip_boxes) - 1
+            box.delete(array.get(flip_boxes, _i))
+        array.clear(flip_boxes)
+    if not na(route_lbl)
+        label.delete(route_lbl)
+    if not na(prev_lbl)
+        label.delete(prev_lbl)
+    if not na(alt_lbl)
+        label.delete(alt_lbl)
+    if not na(fez_box)
+        box.delete(fez_box)
+    if not na(fez_lbl)
+        label.delete(fez_lbl)
+
+    // ── Network levels + tallies (counts, FEZ bounds, alignment, dominant) ───
+    int   _activeAligned = 0
+    int   _activeTotal   = 0
+    float _topAuth       = 0.0
+    int   _openMem       = 0
+    int   _consumedCnt   = 0
+    int   _objCnt        = 0
+    float _bullAuth      = 0.0
+    float _bearAuth      = 0.0
+    int   _domIdx        = -1
+    float _domAuth       = 0.0
+    float _fezHiPx       = na   // strongest node above price (upper flip)
+    float _fezLoPx       = na   // strongest node below price (lower flip)
+    int   _fezHiW        = 0
+    int   _fezLoW        = 0
+    float _fezHiAuth     = 0.0
+    float _fezLoAuth     = 0.0
+    if array.size(nPx) > 0
+        for _i = 0 to array.size(nPx) - 1
+            int   _st = array.get(nState, _i)
+            if _st == 2
+                _consumedCnt += 1
+            else
+                _openMem += 1
+            float _a  = f_auth(_i)
+            // CONSUMED / historical nodes — faint dotted memory (Web 2.0), shown
+            // so most of the historical network stays visible on the chart.
+            if showConsumed and showLevels and _st == 2 and _a >= authMin
+                float _npc = array.get(nPx, _i)
+                array.push(level_lines, line.new(bar_index - 1, _npc, bar_index + 6, _npc, color = color.new(color.gray, 82), width = 1, style = line.style_dotted))
+            if _st != 2 and _a >= authMin
+                float _np = array.get(nPx, _i)
+                int   _nd = array.get(nDir, _i)
+                int   _wt = array.get(nWt, _i)
+                if showLevels
+                    color _base = tfColors ? f_tfColor(_wt) : (_nd == 1 ? #00ffaa : #ff6600)
+                    color _c    = _st == 0 ? color.new(_base, 25) : color.new(_base, 70)
+                    array.push(level_lines, line.new(bar_index - 1, _np, bar_index + 12, _np, color = _c, width = 1, style = _st == 0 ? line.style_solid : line.style_dotted))
+                    array.push(level_lbls, label.new(bar_index + 12, _np, f_wtTf(_wt) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round(_a)), style = label.style_label_left, color = color.new(#10103a, 20), textcolor = _st == 0 ? _base : color.gray, size = size.tiny))
+                // FLIP ZONE (Web 1.1) — the band each FU creates between its tip
+                // (spike) and midpoint; the flip is where price flips authority.
+                if showFlips
+                    float _fMid = array.get(nMid, _i)
+                    if not na(_fMid)
+                        color _fc = tfColors ? f_tfColor(_wt) : (_nd == 1 ? #00ffaa : #ff6600)
+                        array.push(flip_boxes, box.new(bar_index + 1, math.max(_np, _fMid), bar_index + 6, math.min(_np, _fMid), border_color = color.new(_fc, _st == 0 ? 45 : 75), border_width = 1, bgcolor = color.new(_fc, _st == 0 ? 86 : 93)))
+                _activeTotal += 1
+                if array.get(nWt, _i) >= 7
+                    _objCnt += 1
+                if _nd == netBias and netBias != 0
+                    _activeAligned += 1
+                if _nd == 1
+                    _bullAuth += _a
+                else if _nd == -1
+                    _bearAuth += _a
+                if _a > _topAuth
+                    _topAuth := _a
+                if _a > _domAuth
+                    _domAuth := _a
+                    _domIdx  := _i
+                // FEZ corridor = between the strongest LINKED structures, not
+                // merely the nearest: top-authority node above & below price.
+                if _np > close and _a > _fezHiAuth
+                    _fezHiPx   := _np
+                    _fezHiW    := _wt
+                    _fezHiAuth := _a
+                if _np < close and _a > _fezLoAuth
+                    _fezLoPx   := _np
+                    _fezLoW    := _wt
+                    _fezLoAuth := _a
+
+    // ── FEZ (FU Equilibrium Zone) — the corridor price oscillates inside,
+    //    bounded by the strongest linked structure above and below price. ──────
+    if showFEZ and not na(_fezHiPx) and not na(_fezLoPx)
+        fez_box := box.new(bar_index - 1, _fezHiPx, bar_index + 12, _fezLoPx, border_color = color.new(#7b2fff, 40), border_width = 1, bgcolor = color.new(#7b2fff, 88))
+        float _comp = (_fezHiPx - _fezLoPx) / math.max(_atr, 1e-10)
+        fez_lbl := label.new(bar_index - 1, (_fezHiPx + _fezLoPx) * 0.5, "FEZ  " + f_wtTf(_fezLoW) + "↔" + f_wtTf(_fezHiW) + "  " + str.tostring(_comp, "#.#") + " ATR", style = label.style_label_right, color = color.new(#3a1f6b, 20), textcolor = #d9c6ff, size = size.tiny)
+
+    // ── Routes: CURRENT path (forward, bias side) + PREVIOUS path (trail) ────
+    float _routeConf = (netBias == 0 or _activeTotal == 0) ? 0.0 : math.min(100.0, _topAuth * 0.5 + (_activeAligned / math.max(_activeTotal, 1) * 100.0) * 0.5)
+    string _domPath = "—"
+    float _altConfOut = 0.0
+
+    // CURRENT path — where price is going: chain forward (to the right) through
+    // bias-side open nodes, nearest-first. Color = target TF, width = authority.
+    if showCurPath and netBias != 0 and _routeConf >= routeMinConf
+        array<int> _ri = f_pathNodes(true)
+        if array.size(_ri) > 0
+            int   _x = bar_index
+            float _y = close
+            _domPath := "Price"
+            for _i = 0 to array.size(_ri) - 1
+                int   _idx = array.get(_ri, _i)
+                float _n   = array.get(nPx, _idx)
+                int   _wt  = array.get(nWt, _idx)
+                float _aa  = f_auth(_idx)
+                int   _x2  = _x + 9
+                int   _w   = _aa >= 90 ? 4 : _aa >= 65 ? 3 : 2
+                color _lc  = tfColors ? f_tfColor(_wt) : #b388ff
+                array.push(route_lines, line.new(_x, _y, _x2, _n, color = color.new(_lc, 0), width = _w, style = line.style_arrow_right))
+                _x := _x2
+                _y := _n
+                _domPath := _domPath + " → " + f_wtTf(_wt)
+            route_lbl := label.new(_x, _y, "CURRENT  " + str.tostring(math.round(_routeConf)) + "%  →  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_left, color = color.new(#7b2fff, 5), textcolor = color.white, size = size.normal)
+
+    // ALTERNATIVE / AFE path — the reversal scenario: a dashed leg to the
+    // strongest node OPPOSITE the bias side, with the complementary probability.
+    if showAltPath and netBias != 0 and array.size(nPx) > 0
+        int   _altIdx = -1
+        float _altA   = 0.0
+        for _i = 0 to array.size(nPx) - 1
+            if array.get(nState, _i) != 2 and f_auth(_i) >= authMin
+                float _np  = array.get(nPx, _i)
+                bool  _opp = netBias == 1 ? _np < close : _np > close
+                if _opp and f_auth(_i) > _altA
+                    _altA   := f_auth(_i)
+                    _altIdx := _i
+        if _altIdx >= 0
+            float _an     = array.get(nPx, _altIdx)
+            float _altConf = math.max(0.0, 100.0 - _routeConf)
+            _altConfOut := _altConf
+            array.push(route_lines, line.new(bar_index, close, bar_index + 9, _an, color = color.new(#ff8a3d, 10), width = 1, style = line.style_dashed))
+            alt_lbl := label.new(bar_index + 9, _an, "ALT  " + str.tostring(math.round(_altConf)) + "%  →  " + str.tostring(math.round_to_mintick(_an)), style = label.style_label_left, color = color.new(#6b3a14, 10), textcolor = #ffb27f, size = size.small)
+
+    // PREVIOUS path — the trail price came from: chain backward (to the left)
+    // through the open nodes behind price, nearest-first, as dim cyan arrows.
+    if showPrevPath and netBias != 0
+        array<int> _pi = f_pathNodes(false)
+        if array.size(_pi) > 0
+            int   _x = bar_index
+            float _y = close
+            for _i = 0 to array.size(_pi) - 1
+                int   _idx = array.get(_pi, _i)
+                float _n   = array.get(nPx, _idx)
+                int   _x2  = _x - 9
+                array.push(route_lines, line.new(_x2, _n, _x, _y, color = color.new(#26c6da, 15), width = 2, style = line.style_arrow_right))
+                _x := _x2
+                _y := _n
+            prev_lbl := label.new(_x, _y, "TRAIL  ←  " + str.tostring(math.round_to_mintick(_y)), style = label.style_label_right, color = color.new(#0d5b66, 5), textcolor = #aef3fb, size = size.small)
+
+    // ── CONVERSATIONS (Web 1.2) — physically draw the node-to-node money-flow
+    //    conversations as light dashed edges in the right margin. The strongest
+    //    nodes are sorted by price and chained, so you SEE how upper/lower FUs
+    //    and their flip zones talk to each other (the canonical FEZ ladder).
+    //    Kept faint + off the candles so it never clutters the price action. ──
+    if showConversations and array.size(nPx) > 0
+        array<int> _cv = array.new_int()
+        for _i = 0 to array.size(nPx) - 1
+            if showConsumed or array.get(nState, _i) != 2
+                array.push(_cv, _i)
+        // keep the strongest webMaxEdges nodes (its own gate, NOT the display
+        // authMin — so the web shows far more conversations than the levels do)
+        if array.size(_cv) > webMaxEdges
+            for _a = 1 to array.size(_cv) - 1
+                int   _key = array.get(_cv, _a)
+                float _ka  = f_auth(_key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if f_auth(array.get(_cv, _b)) < _ka
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+            while array.size(_cv) > webMaxEdges
+                array.pop(_cv)
+        // sort the kept nodes by price ascending → the vertical ladder order
+        if array.size(_cv) > 1
+            for _a = 1 to array.size(_cv) - 1
+                int   _key = array.get(_cv, _a)
+                float _kp  = array.get(nPx, _key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if array.get(nPx, array.get(_cv, _b)) > _kp
+                        array.set(_cv, _b + 1, array.get(_cv, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_cv, _b + 1, _key)
+        // chain consecutive nodes with faint dashed arrows in the right margin
+        if array.size(_cv) > 1
+            int _cx = bar_index + 2
+            for _i = 1 to array.size(_cv) - 1
+                int   _iA  = array.get(_cv, _i - 1)
+                int   _iB  = array.get(_cv, _i)
+                float _pA  = array.get(nPx, _iA)
+                float _pB  = array.get(nPx, _iB)
+                int   _wtB = array.get(nWt, _iB)
+                color _ec  = tfColors ? color.new(f_tfColor(_wtB), 68) : color.new(#b388ff, 68)
+                array.push(conv_lines, line.new(_cx, _pA, _cx + 3, _pB, color = _ec, width = 1, style = line.style_dashed))
+                _cx := _cx + 3
+
+    // ── Network panel (Engine 2.13) ─────────────────────────────────────────
+    if showPanel
+        if na(netPanel)
+            netPanel := table.new(position.top_right, 2, 32, bgcolor = color.new(#0b0b1c, 6), frame_color = color.new(#7b2fff, 30), frame_width = 2, border_width = 0)
+        int    _nodesTot = array.size(nPx)
+        int    _convCnt  = math.max(0, _activeTotal - 1)
+        int    _fezCnt   = (not na(_fezHiPx) and not na(_fezLoPx)) ? 1 : 0
+        float  _bMax     = math.max(_bullAuth, _bearAuth)
+        float  _bMin     = math.min(_bullAuth, _bearAuth)
+        int    _conflict = _bMax > 0 ? math.round(_bMin / _bMax * 100.0) : 0
+        int    _alignment = 100 - _conflict
+        string _side     = netBias == 1 ? "BULL" : netBias == -1 ? "BEAR" : "FLAT"
+        int    _primary  = math.round(_routeConf)
+        int    _secondary = math.round((100.0 - _routeConf) * 0.6)
+        int    _failure  = math.max(0, 100 - _primary - _secondary)
+        string _domTf    = _domIdx >= 0 ? f_wtTf(array.get(nWt, _domIdx)) : "—"
+        string _owner    = _domIdx >= 0 ? str.tostring(math.round_to_mintick(array.get(nPx, _domIdx))) + " " + _domTf + " FU" : "—"
+        // Engine 3.16/3.17 — Central Intelligence core
+        table.cell(netPanel, 0, 0, "CENTRAL INTELLIGENCE", text_color = #b388ff, text_size = size.normal)
+        table.cell(netPanel, 1, 0, netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT", text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.normal)
+        table.cell(netPanel, 0, 1, "ACTIVE NETWORK", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 1, _side, text_color = netBias == 1 ? #5aff9e : netBias == -1 ? #ff5a5a : color.gray, text_size = size.small)
+        table.cell(netPanel, 0, 2, "NETWORK OWNER", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 2, _owner, text_color = #ffd000, text_size = size.small)
+        table.cell(netPanel, 0, 3, "DOMINANT TF", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 3, _domTf, text_color = #ffd000, text_size = size.small)
+        table.cell(netPanel, 0, 4, "─ PATHS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 4, "", text_size = size.small)
+        table.cell(netPanel, 0, 5, "PRIMARY PATH", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 5, str.tostring(_primary) + "%", text_color = #5aff9e, text_size = size.small)
+        table.cell(netPanel, 0, 6, "SECONDARY PATH", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 6, str.tostring(_secondary) + "%", text_color = color.yellow, text_size = size.small)
+        table.cell(netPanel, 0, 7, "FAILURE PATH", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 7, str.tostring(_failure) + "%", text_color = #ff5a5a, text_size = size.small)
+        table.cell(netPanel, 0, 8, "PRIMARY CONVERSATION", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 8, str.tostring(_primary) + "%", text_color = #5aff9e, text_size = size.small)
+        table.cell(netPanel, 0, 9, _domPath, text_color = #b388ff, text_size = size.small)
+        table.cell(netPanel, 1, 9, "", text_size = size.small)
+        table.cell(netPanel, 0, 10, "─ DOMINANCE ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 10, "", text_size = size.small)
+        table.cell(netPanel, 0, 11, "Bull / Bear", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 11, str.tostring(math.round(_bullAuth)) + " / " + str.tostring(math.round(_bearAuth)), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 12, "ALIGNMENT", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 12, str.tostring(_alignment) + "%", text_color = #5aff9e, text_size = size.small)
+        table.cell(netPanel, 0, 13, "NETWORK CONFLICT", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 13, str.tostring(_conflict) + "%", text_color = _conflict >= 50 ? #ff5a5a : color.yellow, text_size = size.small)
+        table.cell(netPanel, 0, 14, "─ NETWORK STATE ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 14, "", text_size = size.small)
+        table.cell(netPanel, 0, 15, "ACTIVE CONVERSATIONS", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 15, str.tostring(_convCnt), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 16, "ACTIVE FU", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 16, str.tostring(_activeTotal), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 17, "ACTIVE FLIPS", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 17, str.tostring(_openMem), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 18, "ACTIVE FEZ", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 18, str.tostring(_fezCnt), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 19, "ACTIVE OBJECTIVES", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 19, str.tostring(_objCnt), text_color = color.white, text_size = size.small)
+        table.cell(netPanel, 0, 20, "NODES / EDGES", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 20, str.tostring(_nodesTot) + " / " + str.tostring(_convCnt), text_color = color.white, text_size = size.small)
+        // magnet-sorted list of open eligible nodes (used for both sections)
+        array<int> _mg = array.new_int()
+        if array.size(nPx) > 0
+            for _i = 0 to array.size(nPx) - 1
+                if array.get(nState, _i) != 2 and f_auth(_i) >= authMin
+                    array.push(_mg, _i)
+        if array.size(_mg) > 1
+            for _a = 1 to array.size(_mg) - 1
+                int   _key = array.get(_mg, _a)
+                float _km  = f_magnet(_key)
+                int   _b   = _a - 1
+                bool  _go  = _b >= 0
+                while _go
+                    if f_magnet(array.get(_mg, _b)) < _km
+                        array.set(_mg, _b + 1, array.get(_mg, _b))
+                        _b -= 1
+                        _go := _b >= 0
+                    else
+                        _go := false
+                array.set(_mg, _b + 1, _key)
+        // STRONGEST MAGNETS (top 3 by magnet score)
+        table.cell(netPanel, 0, 21, "─ STRONGEST MAGNETS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 21, "", text_color = color.white, text_size = size.small)
+        int _mn = math.min(array.size(_mg), 3)
+        for _k = 0 to 2
+            if _k < _mn
+                int _idx = array.get(_mg, _k)
+                int _nd  = array.get(nDir, _idx)
+                table.cell(netPanel, 0, 22 + _k, str.tostring(_k + 1) + " " + f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(array.get(nPx, _idx))), text_color = tfColors ? f_tfColor(array.get(nWt, _idx)) : (_nd == 1 ? #5aff9e : #ff5a5a), text_size = size.small)
+                table.cell(netPanel, 1, 22 + _k, "MAGNET " + str.tostring(math.round(f_magnet(_idx))), text_color = #ffd000, text_size = size.small)
+            else
+                table.cell(netPanel, 0, 22 + _k, "—", text_color = color.gray, text_size = size.small)
+                table.cell(netPanel, 1, 22 + _k, "", text_color = color.gray, text_size = size.small)
+        // ACTIVE CONVERSATIONS (top 5, with status + distance)
+        table.cell(netPanel, 0, 25, "─ ACTIVE CONVERSATIONS ─", text_color = #ff7fe6, text_size = size.small)
+        table.cell(netPanel, 1, 25, "", text_color = color.white, text_size = size.small)
+        int _cn = math.min(array.size(_mg), 5)
+        for _k = 0 to 4
+            if _k < _cn
+                int   _idx  = array.get(_mg, _k)
+                int   _nd   = array.get(nDir, _idx)
+                float _np   = array.get(nPx, _idx)
+                float _dATR = math.abs(close - _np) / math.max(_atr, 1e-10)
+                int   _rv   = array.get(nRev, _idx)
+                bool  _ahead = netBias == 1 ? _np > close : _np < close
+                string _status = _dATR < 0.5 ? "ATTACKING" : _rv > 0 ? "RETURNING" : _ahead ? "ATTRACTING" : "BEHIND"
+                table.cell(netPanel, 0, 26 + _k, f_wtTf(array.get(nWt, _idx)) + (_nd == 1 ? " ▲ " : " ▼ ") + str.tostring(math.round_to_mintick(_np)), text_color = tfColors ? f_tfColor(array.get(nWt, _idx)) : (_nd == 1 ? #5aff9e : #ff5a5a), text_size = size.small)
+                table.cell(netPanel, 1, 26 + _k, _status + "  " + str.tostring(_dATR, "#.#") + " ATR", text_color = color.white, text_size = size.small)
+            else
+                table.cell(netPanel, 0, 26 + _k, "—", text_color = color.gray, text_size = size.small)
+                table.cell(netPanel, 1, 26 + _k, "", text_color = color.gray, text_size = size.small)
+        // WEB INTEGRITY (Web 1.8) — node-completeness of the live network: how
+        // many structure classes (FU/flip · FEZ · objective · consumed memory)
+        // are actually populated. Low integrity = the network is sparse.
+        int    _webCov   = (_activeTotal > 0 ? 1 : 0) + (_fezCnt > 0 ? 1 : 0) + (_objCnt > 0 ? 1 : 0) + (_consumedCnt > 0 ? 1 : 0)
+        string _webInteg = _webCov >= 3 ? "HIGH" : _webCov == 2 ? "MED" : "LOW"
+        table.cell(netPanel, 0, 31, "WEB INTEGRITY", text_color = color.silver, text_size = size.small)
+        table.cell(netPanel, 1, 31, _webInteg + " (" + str.tostring(_webCov) + "/4)", text_color = _webCov >= 3 ? #5aff9e : _webCov == 2 ? color.yellow : #ff5a5a, text_size = size.small)
+
+    // ── NETWORK CO-PILOT (bottom-right) — live read of where price is, the most
+    //    likely path & its next nodes, the alternate / counter paths with their
+    //    probabilities, and a plain-language note on the interaction in progress.
+    if showCoPilot
+        if na(coPilot)
+            coPilot := table.new(position.bottom_right, 1, 10, bgcolor = color.new(#0b0b1c, 4), frame_color = color.new(#22d3ee, 30), frame_width = 2, border_width = 0)
+        array<int> _fwdCP = f_pathNodes(true)
+        array<int> _bwdCP = f_pathNodes(false)
+        int _toIdx   = array.size(_fwdCP) > 0 ? array.get(_fwdCP, 0) : -1
+        int _thenIdx = array.size(_fwdCP) > 1 ? array.get(_fwdCP, 1) : -1
+        int _altIdx  = array.size(_fwdCP) > 2 ? array.get(_fwdCP, 2) : _thenIdx
+        int _fromIdx = array.size(_bwdCP) > 0 ? array.get(_bwdCP, 0) : -1
+        int _ctrIdx  = array.size(_bwdCP) > 1 ? array.get(_bwdCP, 1) : _fromIdx
+        int _pPrimary = math.round(_routeConf)
+        int _pAlt     = math.round((100.0 - _routeConf) * 0.6)
+        int _pCounter = math.max(0, 100 - _pPrimary - _pAlt)
+        float _atrCP   = math.max(_atr, 1e-10)
+        float _projMin = _atrCP * 2.0
+        float _toPx    = _toIdx  >= 0 ? array.get(nPx, _toIdx)  : close
+        float _ctrPx   = _ctrIdx >= 0 ? array.get(nPx, _ctrIdx) : close
+        // ── FUTURE PROJECTION — what price does AFTER the current / alternate
+        //    path completes. The near path already collects EVERY bias-side node,
+        //    so the future must reach FURTHER: prefer a higher-TF node that sits
+        //    ≥2·ATR beyond the near target; if the network has no node that far
+        //    out, project a measured-move EXTENSION of the leg so it always shows
+        //    a genuine next objective instead of duplicating the current path.
+        int   _deepCur = array.size(_fwdCP) > 0 ? array.get(_fwdCP, array.size(_fwdCP) - 1) : -1
+        float _endCur  = _deepCur >= 0 ? array.get(nPx, _deepCur) : close
+        int   _deepAlt = array.size(_bwdCP) > 0 ? array.get(_bwdCP, array.size(_bwdCP) - 1) : -1
+        float _endAlt  = _deepAlt >= 0 ? array.get(nPx, _deepAlt) : close
+        int   _futCn = f_htfNode(true,  _toIdx)
+        int   _futAn = f_htfNode(false, _ctrIdx)
+        bool  _futCisNode = _futCn >= 0 and (netBias == -1 ? array.get(nPx, _futCn) < _toPx  - _projMin : array.get(nPx, _futCn) > _toPx  + _projMin)
+        bool  _futAisNode = _futAn >= 0 and (netBias == -1 ? array.get(nPx, _futAn) > _ctrPx + _projMin : array.get(nPx, _futAn) < _ctrPx - _projMin)
+        float _spanC  = math.max(math.abs(close - _endCur), _projMin)
+        float _spanA  = math.max(math.abs(close - _endAlt), _projMin)
+        float _futCPx = _futCisNode ? array.get(nPx, _futCn) : (netBias == -1 ? _endCur - _spanC : _endCur + _spanC)
+        float _futAPx = _futAisNode ? array.get(nPx, _futAn) : (netBias == -1 ? _endAlt + _spanA : _endAlt - _spanA)
+        string _futCStr = _futCisNode ? f_cpNode(_futCn) : ("proj " + (netBias == -1 ? "▼ " : "▲ ") + str.tostring(math.round_to_mintick(_futCPx)))
+        string _futAStr = _futAisNode ? f_cpNode(_futAn) : ("proj " + (netBias == -1 ? "▲ " : "▼ ") + str.tostring(math.round_to_mintick(_futAPx)))
+        bool _inFez = not na(_fezHiPx) and not na(_fezLoPx) and close <= _fezHiPx and close >= _fezLoPx
+        string _loc = _inFez ? ("FEZ " + f_wtTf(_fezLoW) + "↔" + f_wtTf(_fezHiW)) : (not na(_fezHiPx) and close > _fezHiPx ? "above network" : not na(_fezLoPx) and close < _fezLoPx ? "below network" : "mid-network")
+        string _bw = netBias == 1 ? "bullish" : netBias == -1 ? "bearish" : "flat"
+        // narrative — which interaction price is currently attempting
+        string _narr = "Price " + (_inFez ? "is oscillating inside the FEZ corridor" : "is travelling between nodes")
+        if _fromIdx >= 0
+            float _fp = array.get(nPx, _fromIdx)
+            _narr := _narr + ", having left the " + f_wtTf(array.get(nWt, _fromIdx)) + " " + (array.get(nDir, _fromIdx) == 1 ? "demand" : "supply") + " flip @ " + str.tostring(math.round_to_mintick(_fp)) + " (" + (_fp < close ? "lower" : "upper") + ")"
+        _narr := _narr + ".\n"
+        if _toIdx >= 0
+            float _tp = array.get(nPx, _toIdx)
+            _narr := _narr + "It is now attacking the " + f_wtTf(array.get(nWt, _toIdx)) + " " + (array.get(nDir, _toIdx) == 1 ? "demand" : "supply") + " node @ " + str.tostring(math.round_to_mintick(_tp)) + " (" + (_tp > close ? "upper" : "lower") + "), " + _bw + " bias " + str.tostring(_pPrimary) + "%."
+            if _thenIdx >= 0
+                _narr := _narr + "\nIf consumed, next objective " + f_cpNode(_thenIdx) + "."
+        else
+            _narr := _narr + "No bias-side target left — likely at an objective; watch for absorption / reversal."
+        // future story — what happens beyond the immediate path
+        _narr := _narr + "\nStory: after the current path, price extends toward " + _futCStr + (_futCisNode ? " (higher-TF objective)" : " (measured-move extension)") + ". The alternate routes toward " + _futAStr + "."
+        table.cell(coPilot, 0, 0, "◆ NETWORK CO-PILOT    " + (netBias == 1 ? "▲ BULL" : netBias == -1 ? "▼ BEAR" : "○ FLAT"), text_color = #22d3ee, text_size = size.large, text_halign = text.align_left)
+        table.cell(coPilot, 0, 1, "Price " + str.tostring(math.round_to_mintick(close)) + "    ·    " + _loc, text_color = color.white, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 2, "PRIMARY " + str.tostring(_pPrimary) + "%    → " + f_cpNode(_toIdx) + "   → " + f_cpNode(_thenIdx), text_color = #5aff9e, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 3, "ALTERNATE " + str.tostring(_pAlt) + "%    → " + f_cpNode(_altIdx), text_color = color.yellow, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 4, "COUNTER " + str.tostring(_pCounter) + "%    → " + f_cpNode(_ctrIdx), text_color = #ff8a8a, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 5, "─ FUTURE PROJECTION ─", text_color = #ff7fe6, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 6, "Future CURRENT      → " + _futCStr, text_color = #7cffc4, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 7, "Future ALTERNATE  → " + _futAStr, text_color = #ffd28a, text_size = size.normal, text_halign = text.align_left)
+        table.cell(coPilot, 0, 8, "──────────────────────────────", text_color = color.new(#22d3ee, 40), text_size = size.small, text_halign = text.align_left)
+        table.cell(coPilot, 0, 9, _narr, text_color = #d9e6ff, text_size = size.normal, text_halign = text.align_left)
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS — published so "Master Senseei" can read this engine via input.source.
+//   IN Bias     : -1 / 0 / 1 network directional bias
+//   IN Nodes    : live size of the node registry (network richness)
+//   IN Pressure : live bull-vs-bear authority balance, -100..+100 (conviction)
+// display.data_window keeps them OFF the chart but selectable as external sources.
+// ═══════════════════════════════════════════════════════════════════════════════
+var float inPressure = 0.0
+float _ibull = 0.0
+float _ibear = 0.0
+if array.size(nPx) > 0
+    for _pi = 0 to array.size(nPx) - 1
+        if array.get(nState, _pi) <= 1
+            float _pa = f_auth(_pi)
+            if array.get(nDir, _pi) == 1
+                _ibull += _pa
+            else if array.get(nDir, _pi) == -1
+                _ibear += _pa
+inPressure := (_ibull + _ibear) > 0 ? (_ibull - _ibear) / (_ibull + _ibear) * 100.0 : 0.0
+plot(netBias,         "IN Bias",     color = color.new(color.aqua, 100), display = display.data_window)
+plot(array.size(nPx), "IN Nodes",    color = color.new(color.aqua, 100), display = display.data_window)
+plot(inPressure,      "IN Pressure", color = color.new(color.aqua, 100), display = display.data_window)

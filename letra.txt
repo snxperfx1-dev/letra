@@ -1,5 +1,5 @@
 //@version=6
-indicator("Letra 16", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
+indicator("Letra 45", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_polylines_count=100)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 1 — INPUT GROUPS
@@ -234,37 +234,12 @@ f_mosBar(float _pct) =>
 f_tfProg(float _orig, float _tgt) =>
     (not na(_orig) and not na(_tgt) and math.abs(_tgt - _orig) > 1e-10) ? math.min(100.0, math.abs(close - _orig) / math.abs(_tgt - _orig) * 100.0) : na
 
-// Compact phase abbreviation for on-chart labels (keeps the chart uncluttered).
-f_phaseAbbr(string _p) =>
-    str.contains(_p, "Liquidation Wave") ? "LQW" :
-     _p == "Expansion"                ? "EXP"    :
-     _p == "Expansion Pre-Convexity" ? "EXP·PC" :
-     _p == "Expansion Induction"     ? "EXP·IN" :
-     _p == "Expansion Liquidity"     ? "EXP·LQ" :
-     _p == "New High"                ? "NEW HI" :
-     _p == "New Low"                 ? "NEW LO" :
-     _p == "Absorption"              ? "ABS"    :
-     _p == "Retracement"             ? "RET"    :
-     _p == "Retracement Pre-Convexity" ? "RET·PC" :
-     _p == "Retracement Induction"   ? "RET·IN" :
-     _p == "Retracement Liquidity"   ? "RET·LQ" :
-     _p == "Demand Return"           ? "DEM·RTN" :
-     _p == "Supply Return"           ? "SUP·RTN" :
-     _p == "Point 4 Origin"          ? "P4" : _p
-
-// Clean on-chart phase label — sparse full-word vocabulary; "" = do not label
-// (plain Expansion / Point 4 Origin return "" so the chart isn't spammed).
-f_chartPhaseLabel(string _p) =>
-    str.contains(_p, "Liquidation Wave") ? (str.contains(_p, "Displacement") ? "Displacement of Liquidation leg" : str.contains(_p, "Objective Arrival") ? "Objective Arrival" : "Liquidation") :
-     _p == "Expansion Pre-Convexity" or _p == "Retracement Pre-Convexity" ? "Pre-Convexity" :
-     _p == "Expansion Induction" or _p == "Retracement Induction"         ? "Induction"     :
-     _p == "Expansion Liquidity" or _p == "Retracement Liquidity"         ? "Liquidation"   :
-     _p == "New High"      ? "New High"      :
-     _p == "New Low"       ? "New Low"       :
-     _p == "Absorption"    ? "Absorption"    :
-     _p == "Retracement"   ? "Retracement"   :
-     _p == "Demand Return" ? "Demand Return" :
-     _p == "Supply Return" ? "Supply Return" : ""
+// NOTE (v17): the lossy on-chart phase helpers f_phaseAbbr (LQW/EXP·LQ/…) and
+// f_chartPhaseLabel (collapsed Liquidation/Pre-Convexity/Induction) were REMOVED.
+// They discarded the liquidation title + substate and forced every leg to read
+// "Liquidation". The chart now renders the single Engine-1A authority string
+// `currentDisplayPhase` verbatim as a persistent REGION label (see Section "DIE
+// region-based display authority" below). Do not reintroduce a collapse layer.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 2 — CORE PHYSICS ENGINE
@@ -302,7 +277,16 @@ f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dis
     bool  _accDec = math.abs(_acc) < math.abs(_acc[1])
     [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bCS, _rCS, _bImp, _rImp, _bDec, _rDec, _bMic, _rMic, _vd70, _vd50, _vd85, _vd55x3, _mom, _accDec]
 
-[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, "5", f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
+// ── HTF MEMORY GUARD ─────────────────────────────────────────────────────────
+// On charts ABOVE H1 (H4 / Daily / Weekly …) a request.security() to a LOWER
+// timeframe pulls a massive intrabar count and blows the indicator's memory
+// limit. f_safeTF clamps any requested timeframe UP to the chart timeframe when
+// (and only when) the chart is above H1, so HTF charts request NO lower-TF data.
+// Intraday charts (<= H1) are untouched and keep full M1 / M3 / M5 granularity.
+bool _htfMemGuard = timeframe.in_seconds() > 3600
+f_safeTF(simple string _tf) => _htfMemGuard and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+
+[atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullConvShift, bearConvShift, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullMicroImpulse, bearMicroImpulse, phys_vd70, phys_vd50, phys_vd85, phys_vd55x3, phys_mom, phys_accDec] = request.security(syminfo.tickerid, f_safeTF("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead=barmerge.lookahead_off)
 
 float convThreshold = atr * convMult
 float atrSma     = ta.sma(atr, 20)
@@ -341,11 +325,11 @@ f_htfBeliefs(float _open, float _high, float _low, float _close,
 
     [_dir, _expScore, _decayScr, _curvScr, _abScr, _liqScr]
 
-[raw_dir_tf1, raw_expScr_tf1, raw_decScr_tf1, raw_curvScr_tf1, raw_abScr_tf1, raw_liqScr_tf1] = request.security(syminfo.tickerid, tf1,
+[raw_dir_tf1, raw_expScr_tf1, raw_decScr_tf1, raw_curvScr_tf1, raw_abScr_tf1, raw_liqScr_tf1] = request.security(syminfo.tickerid, f_safeTF(tf1),
     f_htfBeliefs(open, high, low, close, effThresh, dispThresh, acceptBars, convMult, obLookback),
     lookahead=barmerge.lookahead_off)
 
-[raw_dir_tf2, raw_expScr_tf2, raw_decScr_tf2, raw_curvScr_tf2, raw_abScr_tf2, raw_liqScr_tf2] = request.security(syminfo.tickerid, tf2,
+[raw_dir_tf2, raw_expScr_tf2, raw_decScr_tf2, raw_curvScr_tf2, raw_abScr_tf2, raw_liqScr_tf2] = request.security(syminfo.tickerid, f_safeTF(tf2),
     f_htfBeliefs(open, high, low, close, effThresh, dispThresh, acceptBars, convMult, obLookback),
     lookahead=barmerge.lookahead_off)
 
@@ -370,13 +354,13 @@ f_zoneRange() => [ta.highest(high, 20), ta.lowest(low, 20)]
 
 // each timeframe's recent price range so the L2/L1/L3 layers can be SHOWN
 // spatially on the chart instead of only as numeric dashboard readouts.
-[l2_zoneHigh, l2_zoneLow] = request.security(syminfo.tickerid, tf2,
+[l2_zoneHigh, l2_zoneLow] = request.security(syminfo.tickerid, f_safeTF(tf2),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, tf1,
+[l1_zoneHigh, l1_zoneLow] = request.security(syminfo.tickerid, f_safeTF(tf1),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
-[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, "3",
+[l3_zoneHigh, l3_zoneLow] = request.security(syminfo.tickerid, f_safeTF("3"),
      f_zoneRange(), lookahead=barmerge.lookahead_off)
 
 // M1 ("1") and H4 ("240") price ranges — fixed timeframes (match se1 / se240
@@ -691,10 +675,17 @@ f_se(simple int _pvLen, simple int _stLen, simple int _atrL, simple float _effT,
     // lifecycle (expansion / absorption / retracement) every bar, instead of
     // latching on "Point 4 Origin" / "Expansion". The monotonic _phaseState
     // (untouched) still drives the wave-progress %.
+    // MEGATRON 8C/8D (v18) — SPATIAL INDUCTION: counter-momentum that occurs
+    // BEFORE an objective (_phaseState < 5) is the inducement at the target
+    // flip zone, so it now exports Expansion Induction (3) at the first
+    // counter-BOS (_bos1) and Expansion Liquidity (4) once price breaks deeper
+    // (_bos2) — instead of mislabelling a pre-objective reversal as Retracement
+    // (8/9/10). Post-objective counter-momentum still maps to the Retracement
+    // family. This is why "Induction" almost never appeared before.
     int _phase = _phaseState
     if _dir != 0
         _phase := _momExhaust and _physCapacityLow ? 7 :
-                  _momCounter and _physTransfer    ? (_convScore > 40.0 ? 10 : _momDecaying ? 9 : 8) :
+                  _momCounter and _physTransfer    ? (_phaseState >= 5 ? (_convScore > 40.0 ? 10 : _momDecaying ? 9 : 8) : (_bos2 ? 4 : 3)) :
                   _momExpStrong ? (_phaseState >= 5 ? _phaseState : (_bos2 and _physTransfer) ? 4 : (_bos1 and _physConvexDevel) ? 2 : 1) :
                   _momDecaying  ? (_phaseState >= 5 ? _phaseState : 4) :
                   _phaseState == 0 ? 1 :
@@ -784,17 +775,17 @@ f_phaseFamilyCode(int _c) =>
 // These are the ONLY source of structure for M1 / L3 / L0 / L1 / L2 from here on.
 // ═══════════════════════════════════════════════════════════════════════════════
 [se1_dir, se1_ph, se1_sh, se1_sl, se1_psh, se1_psl, se1_bos, se1_ch, se1_p4h, se1_p4l, se1_inv, se1_tgt, se1_ft, se1_fb, se1_fs, se1_wp, se1_cm, se1_mf] =
-     request.security(syminfo.tickerid, "1",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("1"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se3_dir, se3_ph, se3_sh, se3_sl, se3_psh, se3_psl, se3_bos, se3_ch, se3_p4h, se3_p4l, se3_inv, se3_tgt, se3_ft, se3_fb, se3_fs, se3_wp, se3_cm, se3_mf] =
-     request.security(syminfo.tickerid, "3",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("3"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se5_dir, se5_ph, se5_sh, se5_sl, se5_psh, se5_psl, se5_bos, se5_ch, se5_p4h, se5_p4l, se5_inv, se5_tgt, se5_ft, se5_fb, se5_fs, se5_wp, se5_cm, se5_mf] =
-     request.security(syminfo.tickerid, "5",  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("5"),  f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se15_dir, se15_ph, se15_sh, se15_sl, se15_psh, se15_psl, se15_bos, se15_ch, se15_p4h, se15_p4l, se15_inv, se15_tgt, se15_ft, se15_fb, se15_fs, se15_wp, se15_cm, se15_mf] =
-     request.security(syminfo.tickerid, "15", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("15"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se60_dir, se60_ph, se60_sh, se60_sl, se60_psh, se60_psl, se60_bos, se60_ch, se60_p4h, se60_p4l, se60_inv, se60_tgt, se60_ft, se60_fb, se60_fs, se60_wp, se60_cm, se60_mf] =
-     request.security(syminfo.tickerid, "60", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("60"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 [se240_dir, se240_ph, se240_sh, se240_sl, se240_psh, se240_psl, se240_bos, se240_ch, se240_p4h, se240_p4l, se240_inv, se240_tgt, se240_ft, se240_fb, se240_fs, se240_wp, se240_cm, se240_mf] =
-     request.security(syminfo.tickerid, "240", f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
+     request.security(syminfo.tickerid, f_safeTF("240"), f_se(pivotLen, structLen, atrLen, effThresh, dispThresh, convMult, impulseAtrMult, chochBufferATR, effLen), lookahead=barmerge.lookahead_off)
 
 // ── Canonical phase strings per fixed layer ──────────────────────────────────
 string m1_phaseCanon = f_phaseStr(int(nz(se1_ph)))
@@ -2256,7 +2247,7 @@ f_m1Physics(float _c, float _h, float _l) =>
     bool _absEmer  = _e < effThresh * 0.5 and _d < dispThresh * 0.6
     [_expWeak, _convEmer, _indEmer, _liqEmer, _absEmer]
 
-[m1_expWeak, m1_convEmer, m1_indEmer, m1_liqEmer, m1_absEmer] = request.security(syminfo.tickerid, "1",
+[m1_expWeak, m1_convEmer, m1_indEmer, m1_liqEmer, m1_absEmer] = request.security(syminfo.tickerid, f_safeTF("1"),
     f_m1Physics(close, high, low), lookahead=barmerge.lookahead_off)
 
 bool m1ExpansionWeak   = int(nz(int(m1_expWeak  ? 1 : 0), 0)) != 0
@@ -2977,34 +2968,14 @@ if longSignal or shortSignal
 // renders the single active narrative instead of stacking these.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// Track IE1A canonical phase changes (sole lifecycle authority).
-// hypothesisChanged: true when ENGINE 1A transitions to a new canonical phase.
-var string prevHypothesis = "Point 4 Origin"
-bool hypothesisChanged = ie1a_currentPhase != prevHypothesis
-prevHypothesis := ie1a_currentPhase
-
-// In Execution mode these are suppressed entirely (Narrative Engine handles it).
-// In Context/Research mode we show them compressed.
-bool _die_showHypLabel = displayMode == "Research" or
-     (displayMode == "Context" and hypothesisChanged and direction != 0)
-
-if _die_showHypLabel
-    color phLabelCol =
-         ie1a_currentPhase == "Expansion"                  ? color.lime    :
-         ie1a_currentPhase == "Expansion Pre-Convexity" or ie1a_currentPhase == "Expansion Induction" or ie1a_currentPhase == "Expansion Liquidity" ? #c084fc :
-         ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low"    ? #00ff88       :
-         ie1a_currentPhase == "Absorption"                ? color.aqua    :
-         ie1a_currentPhase == "Retracement" or ie1a_currentPhase == "Retracement Pre-Convexity" or ie1a_currentPhase == "Retracement Induction" or ie1a_currentPhase == "Retracement Liquidity" ? color.silver :
-         color.orange
-
-    bool isUp = direction == 1
-    label.new(bar_index,
-         isUp ? low - atr * 0.3 : high + atr * 0.3,
-         l0_currentPhase + " " + str.tostring(math.round(primaryHypothesisConf)) + "%",
-         style      = isUp ? label.style_label_up : label.style_label_down,
-         textcolor  = color.black,
-         color      = color.new(phLabelCol, 25),
-         size       = size.tiny)
+// NOTE (v21): the legacy "hypothesis label" block was REMOVED. It was a SECOND
+// on-chart phase-label authority that (a) only rendered in Context/Research mode,
+// (b) spawned a fresh event label on every canonical-phase change (flood), and
+// (c) coloured Expansion Pre-Convexity, Expansion Induction AND Expansion
+// Liquidity the SAME purple (#c084fc) while labelling them with l0_currentPhase
+// — so two different phases showed as near-identical purple "...Liquidity"
+// labels. The single live region label (die_regionLbl, Engine-1A authority) is
+// now the sole on-chart phase display and renders in every display mode.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 23 — INDUCEMENT ZONE BANDS
@@ -3386,6 +3357,309 @@ if _fuN3 > 0
             else
                 die_anyBearFUActive := true
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 1A.8 / 1A.9 — FU WICK CAPTURE AUTHORITY  (Relevant Structure Authority)
+// ───────────────────────────────────────────────────────────────────────────────
+// Sits ABOVE destination / target / induction / liquidation: the market is drawn
+// toward liquidity TRAPPED by a validated FU wick. A FU candle = a spike that
+// pierces a prior swing (steals liquidity), closes back inside ("the middle
+// finger"), and is later VALIDATED when price destroys the candle's OPPOSITE
+// extreme. The captured wick becomes a future MAGNET; its 38–62% midpoint is the
+// INDUCTION BAND (the default execution / early-trader trap region). Self-
+// contained, chart-timeframe, single live objects (no per-bar trail). Renders
+// FU / FU MID / MAGNET / INDUCTION BAND and exposes fuw_* for downstream engines.
+showFUWick     = input.bool (true, "Show FU Wick Authority (1A.8/1A.9)", group=GRP_FUOB)
+fuwMinWickFrac = input.float(0.4,  "FU Spike: min wick / range",         group=GRP_FUOB, minval=0.2, maxval=0.9, step=0.05)
+fuwLookback    = input.int  (3,    "FU Spike: structure lookback (bars)", group=GRP_FUOB, minval=2, maxval=30)
+showFUConv     = input.bool (true, "Show FU Conversation Route (1A.11/1A.12 arrows)", group=GRP_FUOB)
+showAFE        = input.bool (true, "Show AFE Flip-Echo Path (1A.9B arrow)", group=GRP_FUOB)
+fuRouteMinConf = input.int  (35,   "FU Route: min path confidence %",    group=GRP_FUOB, minval=0, maxval=100)
+fuAuthMin      = input.int  (40,   "FU Route: min node authority score", group=GRP_FUOB, minval=0, maxval=100)
+
+var float fuw_tip      = na      // wick extreme (manipulation point)
+var float fuw_bodyHigh = na
+var float fuw_bodyLow  = na
+var float fuw_mid      = na      // 50% of captured wick
+var float fuw_mid38    = na
+var float fuw_mid62    = na
+var int   fuw_dir      = 0       // 1 = bull FU (lower spike), -1 = bear FU (upper spike)
+var float fuw_leftPool = na      // swept swing = trapped (captured) liquidity = future magnet
+var int   fuw_bar      = na
+var bool  fuw_valid    = false   // becomes true once the opposite extreme is destroyed
+var float fuw_strength = na
+
+// NEW CANDIDATE — a spike through LOCAL structure (the highest high / lowest low
+// of the prior `fuwLookback` bars) that closes back inside it: the "middle finger"
+// that sweeps recent liquidity. Using LOCAL structure (not just the major swing)
+// is what catches the obvious FU spikes through nearby equal highs / lows. The
+// swept level becomes the captured left-liquidity pool (the future magnet).
+float _fuwRange    = math.max(high - low, 1e-10)
+float _fuwPriorHi  = ta.highest(high, fuwLookback)[1]
+float _fuwPriorLo  = ta.lowest(low,  fuwLookback)[1]
+bool  _fuwBearCand = not na(_fuwPriorHi) and high > _fuwPriorHi and close < _fuwPriorHi and (high - math.max(open, close)) / _fuwRange >= fuwMinWickFrac
+bool  _fuwBullCand = not na(_fuwPriorLo) and low  < _fuwPriorLo and close > _fuwPriorLo and (math.min(open, close) - low) / _fuwRange >= fuwMinWickFrac
+
+if _fuwBearCand
+    fuw_dir      := -1
+    fuw_tip      := high
+    fuw_bodyHigh := math.max(open, close)
+    fuw_bodyLow  := math.min(open, close)
+    fuw_mid      := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.50
+    fuw_mid38    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.38
+    fuw_mid62    := fuw_bodyHigh + (fuw_tip - fuw_bodyHigh) * 0.62
+    fuw_leftPool := _fuwPriorHi
+    fuw_bar      := bar_index
+    fuw_valid    := false
+    fuw_strength := math.min(100.0, (fuw_tip - fuw_bodyHigh) / math.max(atr, 1e-10) * 40.0 + 40.0)
+else if _fuwBullCand
+    fuw_dir      := 1
+    fuw_tip      := low
+    fuw_bodyHigh := math.max(open, close)
+    fuw_bodyLow  := math.min(open, close)
+    fuw_mid      := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.50
+    fuw_mid38    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.38
+    fuw_mid62    := fuw_tip + (fuw_bodyLow - fuw_tip) * 0.62
+    fuw_leftPool := _fuwPriorLo
+    fuw_bar      := bar_index
+    fuw_valid    := false
+    fuw_strength := math.min(100.0, (fuw_bodyLow - fuw_tip) / math.max(atr, 1e-10) * 40.0 + 40.0)
+
+// VALIDATION — later price DESTROYS the candle's opposite extreme (break-confirm).
+if not fuw_valid and fuw_dir == -1 and not na(fuw_bodyLow) and bar_index > nz(fuw_bar) and close < fuw_bodyLow
+    fuw_valid := true
+if not fuw_valid and fuw_dir ==  1 and not na(fuw_bodyHigh) and bar_index > nz(fuw_bar) and close > fuw_bodyHigh
+    fuw_valid := true
+
+// INDUCTION BAND = 38–62% of the captured wick. "Induction expected" when price
+// trades back into that band of a VALIDATED FU. futureMagnet = captured liquidity.
+float fuw_bandHi = (na(fuw_mid38) or na(fuw_mid62)) ? na : math.max(fuw_mid38, fuw_mid62)
+float fuw_bandLo = (na(fuw_mid38) or na(fuw_mid62)) ? na : math.min(fuw_mid38, fuw_mid62)
+bool  fuw_inductionExpected = fuw_valid and not na(fuw_bandHi) and close <= fuw_bandHi and close >= fuw_bandLo
+float fuw_futureMagnet      = fuw_valid ? fuw_leftPool : na
+
+// RENDER — single live objects (created once, then moved/updated). Not gated by
+// displayMode, so the FU authority is visible in Execution mode too.
+var box   fuw_bandBox = na
+var label fuw_lblFU   = na
+var label fuw_lblMid  = na
+var label fuw_lblMag  = na
+var label fuw_lblBand = na
+
+if showFUWick and fuw_valid and not na(fuw_tip) and not na(fuw_bandHi)
+    int   _fuwR    = bar_index + 12
+    float _fuwBand = (fuw_bandHi + fuw_bandLo) / 2.0
+    color _fuwCol  = fuw_dir == 1 ? #00ffaa : #ff6600
+    // Induction band box (mid38..mid62), extended to the right edge.
+    if na(fuw_bandBox)
+        fuw_bandBox := box.new(nz(fuw_bar, bar_index), fuw_bandHi, _fuwR, fuw_bandLo, bgcolor=color.new(color.yellow, 82), border_color=color.new(color.yellow, 35), border_width=1)
+    else
+        box.set_lefttop(fuw_bandBox, nz(fuw_bar, bar_index), fuw_bandHi)
+        box.set_rightbottom(fuw_bandBox, _fuwR, fuw_bandLo)
+    // FU label at the wick extreme (manipulation point).
+    if na(fuw_lblFU)
+        fuw_lblFU := label.new(nz(fuw_bar, bar_index), fuw_tip, "FU", style=fuw_dir == -1 ? label.style_label_down : label.style_label_up, color=color.new(_fuwCol, 20), textcolor=color.white, size=size.small)
+    else
+        label.set_xy(fuw_lblFU, nz(fuw_bar, bar_index), fuw_tip)
+        label.set_style(fuw_lblFU, fuw_dir == -1 ? label.style_label_down : label.style_label_up)
+        label.set_color(fuw_lblFU, color.new(_fuwCol, 20))
+    // FU MID label at midpoint.
+    if na(fuw_lblMid)
+        fuw_lblMid := label.new(_fuwR, fuw_mid, "FU MID", style=label.style_label_left, color=color.new(color.aqua, 25), textcolor=color.white, size=size.tiny)
+    else
+        label.set_xy(fuw_lblMid, _fuwR, fuw_mid)
+    // INDUCTION BAND label.
+    if na(fuw_lblBand)
+        fuw_lblBand := label.new(_fuwR, _fuwBand, "INDUCTION BAND", style=label.style_label_left, color=color.new(color.yellow, 15), textcolor=color.black, size=size.tiny)
+    else
+        label.set_xy(fuw_lblBand, _fuwR, _fuwBand)
+    // MAGNET label at captured left-liquidity pool (future target).
+    if not na(fuw_futureMagnet)
+        if na(fuw_lblMag)
+            fuw_lblMag := label.new(_fuwR, fuw_futureMagnet, "MAGNET", style=label.style_label_left, color=color.new(#ff00ff, 20), textcolor=color.white, size=size.tiny)
+        else
+            label.set_xy(fuw_lblMag, _fuwR, fuw_futureMagnet)
+
+// ───────────────────────────────────────────────────────────────────────────────
+// 1A.9 RECURSIVE TARGET HIERARCHY — multi-TF FU left-pool magnets.
+// f_fuPool() detects the most-recent VALIDATED FU on whatever timeframe it is
+// requested on and returns its captured left-liquidity pool + induction band.
+// Lower timeframes target the HIGHER-TF pool (H4 pool is the magnet for H1/M15/
+// M5 recursion), per the spec's recursive target hierarchy.
+f_fuPool(simple float _wickFrac) =>
+    var float _tip   = na
+    var float _bH    = na
+    var float _bL    = na
+    var int   _dir   = 0
+    var float _pool  = na
+    var bool  _valid = false
+    var bool  _conf  = false
+    float _rng  = math.max(high - low, 1e-10)
+    float _priorHi = ta.highest(high, 3)[1]
+    float _priorLo = ta.lowest(low,  3)[1]
+    bool  _bear = not na(_priorHi) and high > _priorHi and close < _priorHi and (high - math.max(open, close)) / _rng >= _wickFrac
+    bool  _bull = not na(_priorLo) and low  < _priorLo and close > _priorLo and (math.min(open, close) - low) / _rng >= _wickFrac
+    if _bear
+        _dir := -1
+        _tip := high
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _pool := _priorHi
+        _valid := true
+        _conf := false
+    else if _bull
+        _dir := 1
+        _tip := low
+        _bH  := math.max(open, close)
+        _bL  := math.min(open, close)
+        _pool := _priorLo
+        _valid := true
+        _conf := false
+    if _valid and _dir == -1 and not _conf and close < _bL
+        _conf := true
+    if _valid and _dir ==  1 and not _conf and close > _bH
+        _conf := true
+    float _mid = na
+    float _bHi = na
+    float _bLo = na
+    if _dir == -1 and not na(_tip)
+        _mid := _bH + (_tip - _bH) * 0.50
+        _bHi := _bH + (_tip - _bH) * 0.62
+        _bLo := _bH + (_tip - _bH) * 0.38
+    else if _dir == 1 and not na(_tip)
+        _mid := _tip + (_bL - _tip) * 0.50
+        _bHi := _tip + (_bL - _tip) * 0.62
+        _bLo := _tip + (_bL - _tip) * 0.38
+    float _wkAtr = (_dir == -1 and not na(_tip)) ? (_tip - _bH) / math.max(ta.atr(14), 1e-10) : (_dir == 1 and not na(_tip)) ? (_bL - _tip) / math.max(ta.atr(14), 1e-10) : 0.0
+    // STRUCTURAL SCORE 0-100: break-confirm 30 + significance 25 + originated-
+    // from-liquidity 20 (always, it swept a high/low) + induction 15 + liq-wave 10.
+    float _score = (_conf ? 30.0 : 0.0) + math.min(25.0, _wkAtr * 15.0) + 20.0 + (_wkAtr > 1.0 ? 15.0 : 0.0) + (_wkAtr > 1.5 ? 10.0 : 0.0)
+    [_valid ? _pool : na, _mid, _bHi, _bLo, _dir, _valid ? 1 : 0, _tip, _score]
+
+[h4_fuPool,  h4_fuMid,  h4_fuBandHi,  h4_fuBandLo,  h4_fuDir,  h4_fuValid,  h4_fuTip,  h4_fuScore]  = request.security(syminfo.tickerid, f_safeTF("240"), f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[h1_fuPool,  h1_fuMid,  h1_fuBandHi,  h1_fuBandLo,  h1_fuDir,  h1_fuValid,  h1_fuTip,  h1_fuScore]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m15_fuPool, m15_fuMid, m15_fuBandHi, m15_fuBandLo, m15_fuDir, m15_fuValid, m15_fuTip, m15_fuScore] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[m5_fuPool,  m5_fuMid,  m5_fuBandHi,  m5_fuBandLo,  m5_fuDir,  m5_fuValid,  m5_fuTip,  m5_fuScore]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[d_fuPool,   d_fuMid,   d_fuBandHi,   d_fuBandLo,   d_fuDir,   d_fuValid,   d_fuTip,   d_fuScore]   = request.security(syminfo.tickerid, f_safeTF("D"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+[w_fuPool,   w_fuMid,   w_fuBandHi,   w_fuBandLo,   w_fuDir,   w_fuValid,   w_fuTip,   w_fuScore]   = request.security(syminfo.tickerid, f_safeTF("W"),   f_fuPool(fuwMinWickFrac), lookahead=barmerge.lookahead_off)
+
+// Recursive alignment % (how many of the six layers carry a live validated FU)
+// and the winning future-magnet target = the HIGHEST timeframe with a valid FU.
+int   _fuActiveCnt   = (nz(w_fuValid) == 1 ? 1 : 0) + (nz(d_fuValid) == 1 ? 1 : 0) + (nz(h4_fuValid) == 1 ? 1 : 0) + (nz(h1_fuValid) == 1 ? 1 : 0) + (nz(m15_fuValid) == 1 ? 1 : 0) + (nz(m5_fuValid) == 1 ? 1 : 0)
+float fu_recursiveAlign = _fuActiveCnt / 6.0 * 100.0
+float  fu_winTarget = na
+string fu_winSrc    = "-"
+float  fu_winBand   = na
+if nz(w_fuValid) == 1 and not na(w_fuPool)
+    fu_winTarget := w_fuPool
+    fu_winSrc    := "W FU Left Pool"
+    fu_winBand   := w_fuMid
+else if nz(d_fuValid) == 1 and not na(d_fuPool)
+    fu_winTarget := d_fuPool
+    fu_winSrc    := "D FU Left Pool"
+    fu_winBand   := d_fuMid
+else if nz(h4_fuValid) == 1 and not na(h4_fuPool)
+    fu_winTarget := h4_fuPool
+    fu_winSrc    := "H4 FU Left Pool"
+    fu_winBand   := h4_fuMid
+else if nz(h1_fuValid) == 1 and not na(h1_fuPool)
+    fu_winTarget := h1_fuPool
+    fu_winSrc    := "H1 FU Left Pool"
+    fu_winBand   := h1_fuMid
+else if nz(m15_fuValid) == 1 and not na(m15_fuPool)
+    fu_winTarget := m15_fuPool
+    fu_winSrc    := "M15 FU Left Pool"
+    fu_winBand   := m15_fuMid
+else if fuw_valid and not na(fuw_futureMagnet)
+    fu_winTarget := fuw_futureMagnet
+    fu_winSrc    := "FU Left Pool"
+    fu_winBand   := fuw_mid
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 1A.9B — ALTERNATING FLIP ECHO ENGINE (AFE)
+// ───────────────────────────────────────────────────────────────────────────────
+// Tracks how a flip zone CHANGES ROLE around a validated FU origin. The FU origin
+// is the permanent authority/destination; the upper flip evolves Destination ->
+// Liquidity as price echoes: expand away -> self-return to upper flip -> sell to
+// lower flip -> lower-flip reversal consumes the upper flip (now liquidity) and
+// targets the FU origin -> FU rejects -> continuation. Six-step state machine.
+var int    afe_step          = 0
+var float  afe_origin        = na     // FU authority extreme (permanent)
+var int    afe_originDir     = 0      // -1 bear FU (top), 1 bull FU (bottom)
+var float  afe_upperFlip     = na     // near flip (FU midpoint / induction band)
+var float  afe_lowerFlip     = na     // far flip (opposing swing)
+var string afe_upperFlipRole = "—"
+var float  afe_activeDest    = na
+var float  afe_target        = na
+var bool   afe_selfReturnDone = false
+var bool   afe_continuation   = false
+
+// (Re)anchor on a freshly validated FU wick authority.
+if fuw_valid and (na(afe_origin) or fuw_tip != afe_origin)
+    afe_origin        := fuw_tip
+    afe_originDir     := fuw_dir
+    afe_upperFlip     := fuw_mid
+    afe_lowerFlip     := fuw_dir == -1 ? nz(prevSwingLow, fuw_bodyLow) : nz(prevSwingHigh, fuw_bodyHigh)
+    afe_step          := 1
+    afe_upperFlipRole := "Destination"
+    afe_activeDest    := fuw_mid
+    afe_target        := na
+    afe_selfReturnDone := false
+    afe_continuation   := false
+
+if afe_step >= 1 and not na(afe_origin) and afe_originDir != 0
+    bool _afeBear = afe_originDir == -1
+    if afe_step == 1 and (_afeBear ? close < nz(fuw_bodyLow, afe_origin) : close > nz(fuw_bodyHigh, afe_origin))
+        afe_step       := 2
+        afe_activeDest := afe_upperFlip
+    if afe_step == 2 and not na(afe_upperFlip) and (_afeBear ? high >= afe_upperFlip : low <= afe_upperFlip)
+        afe_step           := 3
+        afe_selfReturnDone := true
+        afe_activeDest     := afe_lowerFlip
+    if afe_step == 3 and not na(afe_lowerFlip) and (_afeBear ? low <= afe_lowerFlip : high >= afe_lowerFlip)
+        afe_step          := 4
+        afe_activeDest    := afe_origin
+        afe_target        := afe_origin
+        afe_upperFlipRole := "Liquidity"
+    if afe_step == 4 and not na(afe_origin) and (_afeBear ? high >= afe_origin : low <= afe_origin)
+        afe_step         := 5
+        afe_continuation := true
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 1A.10 — FU CONVERSATION (compact, path-only — drawn as ARROWS, no panel)
+// Parent FU being SOUGHT = the highest-timeframe validated FU sitting on the bias
+// side of price. Confidence blends recursive FU alignment with that FU's score.
+int    conv_bias   = displayWaveDir_M5 != 0 ? displayWaveDir_M5 : fractalStackDir
+float  conv_seekPx = na
+string conv_seekTf = "—"
+float  conv_seekSc = 0.0
+if conv_bias != 0
+    if nz(w_fuValid) == 1 and not na(w_fuTip) and (conv_bias == 1 ? w_fuTip > close : w_fuTip < close)
+        conv_seekPx := w_fuTip
+        conv_seekTf := "W"
+        conv_seekSc := nz(w_fuScore)
+    else if nz(d_fuValid) == 1 and not na(d_fuTip) and (conv_bias == 1 ? d_fuTip > close : d_fuTip < close)
+        conv_seekPx := d_fuTip
+        conv_seekTf := "D"
+        conv_seekSc := nz(d_fuScore)
+    else if nz(h4_fuValid) == 1 and not na(h4_fuTip) and (conv_bias == 1 ? h4_fuTip > close : h4_fuTip < close)
+        conv_seekPx := h4_fuTip
+        conv_seekTf := "H4"
+        conv_seekSc := nz(h4_fuScore)
+    else if nz(h1_fuValid) == 1 and not na(h1_fuTip) and (conv_bias == 1 ? h1_fuTip > close : h1_fuTip < close)
+        conv_seekPx := h1_fuTip
+        conv_seekTf := "H1"
+        conv_seekSc := nz(h1_fuScore)
+    else if nz(m15_fuValid) == 1 and not na(m15_fuTip) and (conv_bias == 1 ? m15_fuTip > close : m15_fuTip < close)
+        conv_seekPx := m15_fuTip
+        conv_seekTf := "M15"
+        conv_seekSc := nz(m15_fuScore)
+    else if nz(m5_fuValid) == 1 and not na(m5_fuTip) and (conv_bias == 1 ? m5_fuTip > close : m5_fuTip < close)
+        conv_seekPx := m5_fuTip
+        conv_seekTf := "M5"
+        conv_seekSc := nz(m5_fuScore)
+float conv_confidence = (conv_bias == 0 or na(conv_seekPx)) ? 0.0 : math.min(100.0, conv_seekSc * 0.7 + fu_recursiveAlign * 0.3)
+
 // ── DIE-3: ENTRY CYCLE QUALITY SCORING ───────────────────────────────────────
 // Display-only score 0-100. Uses existing intelligence outputs. No logic changes.
 
@@ -3424,49 +3698,158 @@ bool die_originOld     = die_originAge >= 100
 // Single dominant narrative label. Never stack historical narratives.
 // Uses canonical Unified Wave Lifecycle phase names.
 
-// die_narrative: sourced from ENGINE 1A canonical phase (sole lifecycle authority).
-// The ie1a_hypFamily string maps canonical phases back to the old vocabulary so
-// downstream colour logic (which expects these strings) continues to work.
-string die_narrative    = ie1a_hypFamily    // belief-family string from IE1A
-string die_narrativeDir = currentDisplayPhase // single Engine 1A display authority (canonical + liquidation substate)
+// ── DIE: REGION-BASED DISPLAY AUTHORITY (MEGATRON 8C/8D — v18) ────────────────
+// FIRST PRINCIPLE: Engine 1A Truth -> currentDisplayPhase -> Chart. Nothing in
+// between. No compression, no translation, no abbreviation, no family layer, no
+// event labels. The chart renders `currentDisplayPhase` VERBATIM as a live
+// REGION label. Text, colour, visibility, opacity, style and size ALL consume
+// the SAME authority string (currentDisplayPhase) — there is no second
+// vocabulary (ie1a_hypFamily / f_chartPhaseLabel are gone from this path). The
+// label is created when a phase region begins, LIVE-UPDATED (text/x/y/colour)
+// every bar while the region persists, then FROZEN in place when the region ends
+// and a fresh label is spawned for the next region. No density / displayMode gate.
 
-// Absorption authority: Absorption may only be LABELLED after an objective (New
-// High/Low or liquidation objective arrival) was made; otherwise mid-leg momentum
-// exhaustion is NOT absorption (it is expansion / pre-convexity) and is suppressed.
+// Absorption authority (item 8): Absorption may ONLY be labelled AFTER a genuine
+// objective arrival AND a true CHoCH. Mid-leg "absorption" is illegal. Unlocks on
+// (liqg objective arrival ∧ liqg true CHoCH) or (objective made ∧ structural CHoCH);
+// re-locks the moment a new expansion leg / origin begins.
 var bool die_objMade = false
 if ie1a_currentPhase == "New High" or ie1a_currentPhase == "New Low" or liqg_objArrival
     die_objMade := true
 if ie1a_currentPhase == "Expansion" or ie1a_currentPhase == "Point 4 Origin"
     die_objMade := false
-string die_chartLbl0 = f_chartPhaseLabel(currentDisplayPhase)
-string die_chartLbl = (die_chartLbl0 == "Absorption" and not die_objMade) ? "" : die_chartLbl0
-var string die_lastNarrative = ""
-bool die_narrativeChanged = die_chartLbl != die_lastNarrative and die_chartLbl != ""
-die_lastNarrative := die_chartLbl
+var bool die_absUnlocked = false
+if (liqg_objArrival and liqg_trueCHoCH) or (die_objMade and (bullCHoCH or bearCHoCH))
+    die_absUnlocked := true
+if ie1a_currentPhase == "Expansion" or ie1a_currentPhase == "Point 4 Origin"
+    die_absUnlocked := false
 
-color die_narrCol =
-     die_narrative == "EXPANSION"         ? color.lime   :
-     die_narrative == "CONVEXITY FORMING" ? #c084fc      :
-     die_narrative == "CREATION FORMING"  ? #00ff88      :
-     die_narrative == "ABSORPTION"        ? color.aqua   :
-     die_narrative == "RETRACEMENT"       ? color.silver : color.orange
+// VERBATIM region text — the single authority, uppercased, with the liquidation
+// " • " substate separator rendered as a newline. Absorption suppressed until
+// genuinely unlocked. No phase enumeration, no remap.
+bool   die_isAbs     = str.contains(currentDisplayPhase, "Absorption")
+string die_regionTxt = (die_isAbs and not die_absUnlocked) ? "" : str.upper(str.replace_all(currentDisplayPhase, " • ", "\n"))
 
-// Section 9 — Entry Cycle Visibility gating for the active narrative label.
-// Each narrative state maps to its corresponding visibility category.
-bool die_narrativeVisible =
-     die_narrative == "EXPANSION"         ? ecvShow_Expansion     :
-     die_narrative == "CONVEXITY FORMING" ? ecvShow_Convexity     :
-     die_narrative == "CREATION FORMING"  ? ecvShow_PreConvexity  :
-     die_narrative == "ABSORPTION"        ? ecvShow_Absorption    :
-     die_narrative == "RETRACEMENT"       ? ecvShow_Retracement   : true
+// Colour — derived by INSPECTING the authority string itself (not a second map).
+// Liquidation-wave check first so its substates never fall through to a phase word.
+color die_regionCol =
+     str.contains(currentDisplayPhase, "Liquidation Wave") ? color.orange :
+     str.contains(currentDisplayPhase, "Induction")        ? color.yellow :
+     str.contains(currentDisplayPhase, "Pre-Convexity")    ? #c084fc      :
+     str.contains(currentDisplayPhase, "Liquidity")        ? color.orange :
+     str.contains(currentDisplayPhase, "Absorption")       ? color.aqua   :
+     (str.contains(currentDisplayPhase, "New High") or str.contains(currentDisplayPhase, "New Low")) ? #00ff88 :
+     str.contains(currentDisplayPhase, "Retracement")      ? color.silver :
+     str.contains(currentDisplayPhase, "Return")           ? color.teal   :
+     str.contains(currentDisplayPhase, "Expansion")        ? color.lime   : color.gray
 
-if showNarrative and die_narrativeChanged and direction != 0 and f_die_show(80) and die_narrativeVisible
-    label.new(bar_index,
-         direction == 1 ? high + atr * 1.2 : low - atr * 1.2,
-         die_chartLbl,
-         style=direction == 1 ? label.style_label_down : label.style_label_up,
-         color=color.new(die_narrCol, 40), textcolor=color.black, size=size.tiny)
-    die_labelCount := die_labelCount + 1
+// Visibility — same authority string, wired to the matching Section-9 category.
+// Induction checked before Retracement/Expansion so "Retracement Induction" and
+// "Expansion Induction" both gate on the Induction toggle.
+bool die_regionVisible =
+     str.contains(currentDisplayPhase, "Liquidation Wave") ? ecvShow_Liquidation  :
+     str.contains(currentDisplayPhase, "Induction")        ? ecvShow_Induction    :
+     str.contains(currentDisplayPhase, "Pre-Convexity")    ? ecvShow_PreConvexity :
+     str.contains(currentDisplayPhase, "Liquidity")        ? ecvShow_Liquidation  :
+     str.contains(currentDisplayPhase, "Absorption")       ? ecvShow_Absorption   :
+     str.contains(currentDisplayPhase, "New High")         ? ecvShow_Highs        :
+     str.contains(currentDisplayPhase, "New Low")          ? ecvShow_Lows         :
+     str.contains(currentDisplayPhase, "Demand Return")    ? ecvShow_Demand       :
+     str.contains(currentDisplayPhase, "Supply Return")    ? ecvShow_Supply       :
+     str.contains(currentDisplayPhase, "Retracement")      ? ecvShow_Retracement  :
+     str.contains(currentDisplayPhase, "Expansion")        ? ecvShow_Expansion    : true
+
+// Opacity & size — also authority-driven. Key regions render larger/more solid.
+int  die_regionOpacity = str.contains(currentDisplayPhase, "Liquidation Wave") ? 10 : 20
+bool die_regionBig     = str.contains(currentDisplayPhase, "Liquidation Wave") or str.contains(currentDisplayPhase, "Induction") or str.contains(currentDisplayPhase, "Pre-Convexity")
+
+// Single LIVE label — exactly one object on the chart. Created once, then
+// LIVE-UPDATED (text / position / colour / style / size) on every bar so it
+// always shows the CURRENT region, and deleted when there is nothing to show.
+// It is NOT re-spawned on phase changes, so it never leaves a per-bar trail
+// across history. (The v18 flood came from spawning a frozen label on every
+// change while the live engine phase oscillates bar-to-bar.) Deliberately NOT
+// gated by f_die_show()/displayMode — this is THE phase authority and must
+// survive Execution mode and every density level.
+var label die_regionLbl = na
+float die_regionY    = direction == 1 ? high + atr * 1.2 : low - atr * 1.2
+bool  die_regionShow = showNarrative and die_regionTxt != "" and direction != 0 and die_regionVisible
+
+if die_regionShow
+    if na(die_regionLbl)
+        die_regionLbl := label.new(bar_index + 3, die_regionY, die_regionTxt,
+             style=label.style_label_left,
+             color=color.new(die_regionCol, die_regionOpacity), textcolor=color.white,
+             size=die_regionBig ? size.normal : size.small)
+    else
+        label.set_xy(die_regionLbl, bar_index + 3, die_regionY)
+        label.set_text(die_regionLbl, die_regionTxt)
+        label.set_color(die_regionLbl, color.new(die_regionCol, die_regionOpacity))
+        label.set_style(die_regionLbl, label.style_label_left)
+        label.set_size(die_regionLbl, die_regionBig ? size.normal : size.small)
+else if not na(die_regionLbl)
+    label.delete(die_regionLbl)
+    die_regionLbl := na
+
+// ── REGION HISTORY (v45 audit fix) ───────────────────────────────────────────
+// The live die_regionLbl above shows ONLY the current region (it floats at the
+// right edge and is overwritten each bar). That hid every past phase — the chart
+// appeared to only ever show the longest-lived state. This freezer lays down each
+// COMPLETED phase as a persistent, span-anchored box+label across the candles it
+// occupied, so Expansion / Pre-Convexity / Induction / Push / Displacement /
+// Terminal Liquidation / Objective Arrival all stay on the chart over their own
+// range. A debounce (dieRegConfirm bars) requires the new phase to HOLD before it
+// commits — this is what prevents the v18 bar-to-bar oscillation flood.
+var array<box>   die_rBoxes = array.new<box>()
+var array<label> die_rLbls  = array.new<label>()
+var string die_rPhase = ""
+var int    die_rStart = 0
+var float  die_rHi = na
+var float  die_rLo = na
+var color  die_rCol = color.gray
+var bool   die_rBig = false
+var bool   die_rVis = true
+var string die_rTxt = ""
+var string die_pPend = ""
+var int    die_pCnt = 0
+int dieRegConfirm = 2
+if showNarrative and direction != 0 and barstate.isconfirmed
+    string _rnow = currentDisplayPhase
+    if die_rPhase == ""
+        die_rPhase := _rnow
+        die_rStart := bar_index
+        die_rHi := high
+        die_rLo := low
+    else if _rnow != die_rPhase
+        if _rnow == die_pPend
+            die_pCnt := die_pCnt + 1
+        else
+            die_pPend := _rnow
+            die_pCnt := 1
+        if die_pCnt >= dieRegConfirm
+            if die_rVis and die_rTxt != ""
+                box _bx = box.new(die_rStart, die_rHi, bar_index, die_rLo, border_color=color.new(die_rCol, 50), border_width=1, bgcolor=f_zoneFill(color.new(die_rCol, 90)))
+                label _lb = label.new(math.round((die_rStart + bar_index) / 2.0), die_rHi, die_rTxt, style=label.style_label_down, color=color.new(die_rCol, die_rBig ? 18 : 32), textcolor=color.white, size=die_rBig ? size.normal : size.small)
+                array.push(die_rBoxes, _bx)
+                array.push(die_rLbls, _lb)
+                if array.size(die_rBoxes) > 50
+                    box.delete(array.shift(die_rBoxes))
+                    label.delete(array.shift(die_rLbls))
+            die_rPhase := _rnow
+            die_rStart := bar_index
+            die_rHi := high
+            die_rLo := low
+            die_pPend := ""
+            die_pCnt := 0
+    else
+        die_pPend := ""
+        die_pCnt := 0
+    die_rCol := die_regionCol
+    die_rBig := die_regionBig
+    die_rVis := die_regionVisible
+    die_rTxt := die_regionTxt
+    die_rHi := math.max(nz(die_rHi, high), high)
+    die_rLo := math.min(nz(die_rLo, low), low)
 
 // ── DIE-7: ENTRY CYCLE CLUSTER TRACKING ──────────────────────────────────────
 var int   die_clusterCount     = 0
@@ -4332,7 +4715,7 @@ if showTraceZones and barstate.islast and not na(l4_swH)
     string _l4txt = "H4 · " + l4_dirLabel + " · " + l4_phaseCanon
     if na(l4ZoneLbl)
         l4ZoneLbl := label.new(_h4R_near, l4_swH, _l4txt,
-             style=label.style_label_right, color=color.new(#10103a, 10),
+             style=label.style_label_left, color=color.new(#10103a, 10),
              textcolor=trace_H4_col, size=size.small, textalign=text.align_left)
     else
         label.set_xy  (l4ZoneLbl, _h4R_near, l4_swH)
@@ -4351,7 +4734,7 @@ if showTraceZones and barstate.islast and not na(l2_zoneHigh) and not na(l2_zone
              bgcolor=f_zoneFill(color.new(trace_L2_col, 92)),
              border_style=line.style_solid)
         l2ZoneLbl := label.new(_l2R_near, l2_zoneHigh, _l2txt,
-             style=label.style_label_right,
+             style=label.style_label_left,
              color=color.new(#10103a, 10),
              textcolor=trace_L2_col, size=size.small, textalign=text.align_left)
     else
@@ -4451,7 +4834,7 @@ if showTraceZones and barstate.islast and not na(l1_zoneHigh) and not na(l1_zone
              bgcolor=f_zoneFill(color.new(trace_L1_col, 92)),
              border_style=line.style_dashed)
         l1ZoneLbl := label.new(_l1R_near, l1_zoneHigh, _l1txt,
-             style=label.style_label_right,
+             style=label.style_label_left,
              color=color.new(#10103a, 10),
              textcolor=trace_L1_col, size=size.small, textalign=text.align_left)
     else
@@ -5043,6 +5426,8 @@ dir_tf4_raw = request.security(syminfo.tickerid, mce_tf4, f_htfDir(open, high, l
 f_v72_px(float _v)  => na(_v) ? "–" : str.tostring(math.round_to_mintick(_v))
 f_v72_pct(float _v) => na(_v) ? "–" : str.tostring(math.round(_v)) + "%"
 f_v72_num(float _v, int _d) => na(_v) ? "–" : str.tostring(math.round(_v, _d))
+
+// (f_fuCoordRow removed in Letra 32 — FU registry panel replaced by route arrows)
 f_v72_actionCol(string _a) => _a == "Long" ? #00ff88 : _a == "Short" ? color.red : _a == "No Trade" ? color.maroon : color.gray
 f_v72_gradeCol(string _g)  => _g == "A+" ? #00ffcc : _g == "A" ? color.lime : _g == "B" ? color.yellow : _g == "C" ? color.orange : color.red
 f_v72_riskCol(string _r)   => _r == "LOW" ? color.lime : _r == "MEDIUM" ? color.yellow : color.red
@@ -5448,6 +5833,20 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
                 array.push(dc_sc, math.min(_b + _ov + _al + erf_tradeReadiness * 0.06 - _dpen, 100.0))
                 array.push(dc_ty, _ov > 0 ? "FU + imbalance overlap" : _fst == "Interacting" ? "Residual FU" : "FU candle")
                 array.push(dc_cl, "")
+    // 1B) FU WICK AUTHORITY (1A.8/1A.9) — captured left-liquidity pool is the
+    //     HIGHEST-priority destination (Priority 1); its induction band Priority 2.
+    //     Recursive: the winner is the highest-TF validated FU pool aligned w/ bias.
+    if _tpl_bias != 0 and not na(fu_winTarget) and (_tpl_bias == 1 ? fu_winTarget > close : fu_winTarget < close)
+        float _fudpen = math.min(math.abs(close - fu_winTarget) / math.max(atr, 1e-10) * 1.5, 14.0)
+        array.push(dc_px, fu_winTarget)
+        array.push(dc_sc, math.min(96.0 + fu_recursiveAlign * 0.04 - _fudpen, 100.0))
+        array.push(dc_ty, fu_winSrc + " (magnet)")
+        array.push(dc_cl, "")
+    if _tpl_bias != 0 and not na(fu_winBand) and (_tpl_bias == 1 ? fu_winBand > close : fu_winBand < close)
+        array.push(dc_px, fu_winBand)
+        array.push(dc_sc, 90.0)
+        array.push(dc_ty, "FU induction band")
+        array.push(dc_cl, "")
     // 2) FRZ zones (curated, pre-scored imbalance / return zones)
     if _tpl_bias != 0 and array.size(frz_topArr) > 0
         for _i = 0 to array.size(frz_topArr) - 1
@@ -5709,6 +6108,7 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
         table.cell(mosWar, 0, 4, "─ field ─", text_color=#7a86a8, text_size=size.tiny)
         table.cell(mosWar, 0, 5, dc_scoreboard, text_color=#b8c4e0, text_size=size.tiny)
 
+
         // ── SECTION 7: THREAT MATRIX (bottom left) ──
         var table mosThr = table.new(position.bottom_left, 1, 3, bgcolor=color.new(#0b0b1c, 6), frame_color=color.new(#00e5ff, 25), frame_width=2, border_width=0)
         table.cell(mosThr, 0, 0, "═══  THREATS  ═══", text_color=#00e5ff, text_size=size.small)
@@ -5756,6 +6156,52 @@ f_v72_run(int _dir3, int _dir4, array<float> _cf, array<int> _ci, array<bool> _c
 
 // ── Run the V72 engine once per bar ──────────────────────────────────────────
 f_v72_run(nz(dir_tf3_raw), nz(dir_tf4_raw), v72F, v72I, v72B, v72Sz)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 1A.11 / 1A.12 — FU CONVERSATION ROUTE + AFE ECHO (arrows only).
+// Draws the active route as connected arrows through the high-authority validated
+// FU nodes on the bias side (W -> D -> H4 -> H1 -> M15 -> M5), nearest-first, only
+// when path confidence clears fuRouteMinConf. Nodes below fuAuthMin are noise and
+// excluded. AFE echo arrow points to the active flip/FU target.
+var array<line> conv_route = array.new<line>()
+var label conv_routeLbl    = na
+var line  afe_arrow        = na
+if barstate.islast
+    if array.size(conv_route) > 0
+        for _li = 0 to array.size(conv_route) - 1
+            line.delete(array.get(conv_route, _li))
+        array.clear(conv_route)
+    if not na(conv_routeLbl)
+        label.delete(conv_routeLbl)
+    if not na(afe_arrow)
+        line.delete(afe_arrow)
+    if showFUConv and conv_bias != 0 and conv_confidence >= fuRouteMinConf
+        array<float> _rt = array.new_float()
+        if nz(w_fuValid)   == 1 and not na(w_fuTip)   and nz(w_fuScore)   >= fuAuthMin and (conv_bias == 1 ? w_fuTip   > close : w_fuTip   < close)
+            array.push(_rt, w_fuTip)
+        if nz(d_fuValid)   == 1 and not na(d_fuTip)   and nz(d_fuScore)   >= fuAuthMin and (conv_bias == 1 ? d_fuTip   > close : d_fuTip   < close)
+            array.push(_rt, d_fuTip)
+        if nz(h4_fuValid)  == 1 and not na(h4_fuTip)  and nz(h4_fuScore)  >= fuAuthMin and (conv_bias == 1 ? h4_fuTip  > close : h4_fuTip  < close)
+            array.push(_rt, h4_fuTip)
+        if nz(h1_fuValid)  == 1 and not na(h1_fuTip)  and nz(h1_fuScore)  >= fuAuthMin and (conv_bias == 1 ? h1_fuTip  > close : h1_fuTip  < close)
+            array.push(_rt, h1_fuTip)
+        if nz(m15_fuValid) == 1 and not na(m15_fuTip) and nz(m15_fuScore) >= fuAuthMin and (conv_bias == 1 ? m15_fuTip > close : m15_fuTip < close)
+            array.push(_rt, m15_fuTip)
+        if nz(m5_fuValid)  == 1 and not na(m5_fuTip)  and nz(m5_fuScore)  >= fuAuthMin and (conv_bias == 1 ? m5_fuTip  > close : m5_fuTip  < close)
+            array.push(_rt, m5_fuTip)
+        if array.size(_rt) > 0
+            array.sort(_rt, conv_bias == 1 ? order.ascending : order.descending)
+            int   _rx = bar_index
+            float _ry = close
+            for _ri = 0 to array.size(_rt) - 1
+                float _rn  = array.get(_rt, _ri)
+                int   _rx2 = _rx + 9
+                array.push(conv_route, line.new(_rx, _ry, _rx2, _rn, color=color.new(#b388ff, 0), width=2, style=line.style_arrow_right))
+                _rx := _rx2
+                _ry := _rn
+            conv_routeLbl := label.new(_rx, _ry, conv_seekTf + " FU  " + str.tostring(math.round(conv_confidence)) + "%", style=label.style_label_left, color=color.new(#7b2fff, 10), textcolor=color.white, size=size.small)
+    if showAFE and not na(afe_activeDest)
+        afe_arrow := line.new(bar_index, close, bar_index + 18, afe_activeDest, color=color.new(#c9a0ff, 10), width=2, style=line.style_arrow_right)
 
 
 
@@ -5812,129 +6258,6 @@ if showCtxArcs and ctxArcL2
         arcL2 := polyline.new(arcL2pts, curved=true, xloc=xloc.bar_time, line_color=color.new(color.yellow, 25), line_style=line.style_dashed, line_width=2)
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PING PONG MODE (v90)
-// Always-in, alternating system: BUY the up-legs, SELL the down-legs, flipping on
-// every structure reversal of the selected source. Captures BOTH sides of the
-// oscillation instead of waiting for one directional setup. Self-contained and
-// off by default — does NOT alter the V72 execution engine; it runs in parallel
-// with its own signals, alerts and panel so you can act on every move.
-// ═══════════════════════════════════════════════════════════════════════════════
-var string GRP_PP = "Ping Pong Mode"
-ppMode        = input.bool(false, "Enable Ping Pong Mode",            group=GRP_PP)
-ppSource      = input.string("L0 (M5)", "Flip Trigger Source",
-     options=["Chart CHoCH", "M1", "L3 (M3)", "L0 (M5)", "L1 (M15)", "L2 (H1)"], group=GRP_PP)
-ppShowSignals = input.bool(true,  "Show Ping Pong Signals",          group=GRP_PP)
-ppShowPanel   = input.bool(true,  "Show Ping Pong Panel",            group=GRP_PP)
-ppAlertOn     = input.bool(true,  "Alert on Ping Pong Flip",         group=GRP_PP)
-ppFilter      = input.bool(false, "Filter: only flip WITH fractal-stack direction", group=GRP_PP)
-ppTpR         = input.float(2.0,  "Take Profit (R multiple of stop)",group=GRP_PP, minval=0.5, maxval=10.0, step=0.5)
-
-// Chart-CHoCH direction (used only when the source is "Chart CHoCH")
-var int pp_chartDir = 0
-if bullCHoCH
-    pp_chartDir := 1
-if bearCHoCH
-    pp_chartDir := -1
-
-// Selected structure direction that drives the flips
-int pp_srcDir =
-     ppSource == "Chart CHoCH" ? pp_chartDir :
-     ppSource == "M1"          ? m1_dir      :
-     ppSource == "L3 (M3)"     ? l3_dir      :
-     ppSource == "L0 (M5)"     ? l0_dir      :
-     ppSource == "L1 (M15)"    ? l1_dir      : l2_dir
-
-var int   pp_pos      = 0     // current side: 1 long, -1 short, 0 flat
-var float pp_entry    = na    // entry price of the current leg
-var int   pp_entryBar = na
-var int   pp_flips    = 0
-var float pp_cumPts   = 0.0   // realised points captured across all legs
-var float pp_lastLeg  = 0.0   // points captured on the last closed leg
-var float pp_sl       = na    // current trade stop loss
-var float pp_tp       = na    // current trade take profit
-var int   pp_wins     = 0
-var int   pp_losses   = 0
-// Source structural swings (for the stop) — match the flip-trigger source
-float pp_swH = ppSource == "M1" ? m1_swH : ppSource == "L3 (M3)" ? l3_swH : ppSource == "L1 (M15)" ? l1_swH : ppSource == "L2 (H1)" ? l2_swH : l0_swH
-float pp_swL = ppSource == "M1" ? m1_swL : ppSource == "L3 (M3)" ? l3_swL : ppSource == "L1 (M15)" ? l1_swL : ppSource == "L2 (H1)" ? l2_swL : l0_swL
-
-// Flip when the source direction opposes (or initialises) the current side.
-// Optional filter: when on, only flip in the fractal-stack direction (reduces chop).
-bool pp_rawFlip = ppMode and pp_srcDir != 0 and pp_srcDir != pp_pos
-bool pp_flip    = pp_rawFlip and (pp_pos == 0 or not ppFilter or pp_srcDir == fractalStackDir)
-if pp_flip
-    if pp_pos != 0 and not na(pp_entry)
-        pp_lastLeg := (close - pp_entry) * pp_pos
-        pp_cumPts  := pp_cumPts + pp_lastLeg
-        if pp_lastLeg > 0
-            pp_wins := pp_wins + 1
-        else if pp_lastLeg < 0
-            pp_losses := pp_losses + 1
-    pp_pos      := pp_srcDir
-    pp_entry    := close
-    pp_entryBar := bar_index
-    pp_flips    := pp_flips + 1
-    // Structural stop = the source's opposing swing (fallback: 1.5 ATR); TP = R multiple
-    pp_sl       := pp_srcDir == 1 ? (not na(pp_swL) and pp_swL < close ? pp_swL : close - atr * 1.5) : (not na(pp_swH) and pp_swH > close ? pp_swH : close + atr * 1.5)
-    float _ppRisk = math.max(math.abs(close - pp_sl), atr * 0.1)
-    pp_tp       := pp_srcDir == 1 ? close + _ppRisk * ppTpR : close - _ppRisk * ppTpR
-    if ppShowSignals
-        label.new(bar_index, pp_srcDir == 1 ? low - atr * 0.5 : high + atr * 0.5,
-             pp_srcDir == 1 ? "PP BUY" : "PP SELL",
-             style     = pp_srcDir == 1 ? label.style_label_up : label.style_label_down,
-             color     = pp_srcDir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0),
-             textcolor = color.white, size = size.small)
-
-bool pp_buySignal  = pp_flip and pp_srcDir == 1
-bool pp_sellSignal = pp_flip and pp_srcDir == -1
-alertcondition(pp_buySignal,  title="Ping Pong BUY",  message="Ping Pong: flip LONG")
-alertcondition(pp_sellSignal, title="Ping Pong SELL", message="Ping Pong: flip SHORT")
-
-// Floating points on the open leg
-float pp_openPts = (ppMode and pp_pos != 0 and not na(pp_entry)) ? (close - pp_entry) * pp_pos : 0.0
-int   pp_decided = pp_wins + pp_losses
-float pp_winRate = pp_decided > 0 ? pp_wins / pp_decided * 100.0 : 0.0
-
-// Current-trade Stop / Target lines (refreshed on last bar)
-var line pp_slLine = na
-var line pp_tpLine = na
-if ppMode and barstate.islast
-    if not na(pp_slLine)
-        line.delete(pp_slLine)
-    if not na(pp_tpLine)
-        line.delete(pp_tpLine)
-    if pp_pos != 0 and not na(pp_sl) and not na(pp_tp)
-        pp_slLine := line.new(bar_index, pp_sl, bar_index + 30, pp_sl, color=color.red, width=1, style=line.style_dashed)
-        pp_tpLine := line.new(bar_index, pp_tp, bar_index + 30, pp_tp, color=#00ff88, width=1, style=line.style_dashed)
-
-// ── Ping Pong panel ──────────────────────────────────────────────────────────
-if ppMode and ppShowPanel and barstate.islast and showTable
-    var table ppT = table.new(position.top_center, 2, 10, bgcolor=color.new(#05050f, 0), border_color=color.new(color.fuchsia, 40), border_width=1, frame_color=color.new(color.fuchsia, 20), frame_width=1)
-    string _ppsz = dashTextSize == "tiny" ? size.tiny : dashTextSize == "normal" ? size.normal : size.small
-    table.cell(ppT, 0, 0, "PING PONG", text_color=color.black, bgcolor=color.new(color.fuchsia, 0), text_size=_ppsz)
-    table.cell(ppT, 1, 0, pp_pos == 1 ? "LONG" : pp_pos == -1 ? "SHORT" : "FLAT", text_color=color.black, bgcolor=(pp_pos == 1 ? #00ff88 : pp_pos == -1 ? color.red : color.gray), text_size=_ppsz)
-    table.cell(ppT, 0, 1, "Source", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 1, ppSource + (ppFilter ? " (filtered)" : ""), text_color=color.white, text_size=_ppsz)
-    table.cell(ppT, 0, 2, "Entry", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 2, na(pp_entry) ? "–" : str.tostring(math.round_to_mintick(pp_entry)), text_color=color.white, text_size=_ppsz)
-    table.cell(ppT, 0, 3, "Stop", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 3, na(pp_sl) ? "–" : str.tostring(math.round_to_mintick(pp_sl)), text_color=color.red, text_size=_ppsz)
-    table.cell(ppT, 0, 4, "Target", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 4, na(pp_tp) ? "–" : str.tostring(math.round_to_mintick(pp_tp)), text_color=#00ff88, text_size=_ppsz)
-    table.cell(ppT, 0, 5, "Open Leg", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 5, str.tostring(pp_openPts, "#.##") + " pts", text_color=(pp_openPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
-    table.cell(ppT, 0, 6, "R:R", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 6, str.tostring(ppTpR, "#.#") + " : 1", text_color=color.white, text_size=_ppsz)
-    table.cell(ppT, 0, 7, "Flips", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 7, str.tostring(pp_flips), text_color=color.white, text_size=_ppsz)
-    table.cell(ppT, 0, 8, "Win %", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 8, pp_decided == 0 ? "–" : str.tostring(math.round(pp_winRate)) + "%  (" + str.tostring(pp_wins) + "/" + str.tostring(pp_decided) + ")", text_color=(pp_winRate >= 50 ? #00ff88 : color.red), text_size=_ppsz)
-    table.cell(ppT, 0, 9, "Cum Pts", text_color=color.fuchsia, text_size=_ppsz)
-    table.cell(ppT, 1, 9, str.tostring(pp_cumPts, "#.##"), text_color=(pp_cumPts >= 0 ? #00ff88 : color.red), text_size=_ppsz)
-
-
-
-// ═══════════════════════════════════════════════════════════════════════════════
 // FRACTAL STACK ALERTS (v90) — fire when the fixed-layer stack flips or fully aligns.
 // ═══════════════════════════════════════════════════════════════════════════════
 bool stackFlippedBull  = fractalStackDir == 1  and fractalStackDir[1] != 1
@@ -5943,3 +6266,40 @@ bool stackFullyAligned = fractalStackScore >= 100.0 and fractalStackScore[1] < 1
 alertcondition(stackFlippedBull,  title="Fractal Stack flip BULL", message="Fractal stack flipped bullish")
 alertcondition(stackFlippedBear,  title="Fractal Stack flip BEAR", message="Fractal stack flipped bearish")
 alertcondition(stackFullyAligned, title="All Layers Aligned",      message="All fixed layers aligned (100% stack)")
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS — published for "Master Senseei" (read via input.source on that script).
+//   Letra Dir       : Engine 1A execution direction (-1 / 0 / 1)
+//   Letra Stack Dir : fractal HTF stack alignment direction (-1 / 0 / 1)
+//   Letra Stack %   : fractal stack alignment strength (0-100)
+// display.data_window keeps them OFF the chart but selectable as external sources.
+// ═══════════════════════════════════════════════════════════════════════════════
+plot(direction,         "Letra Dir",       color=color.new(color.white, 100), display=display.data_window)
+plot(fractalStackDir,   "Letra Stack Dir", color=color.new(color.white, 100), display=display.data_window)
+plot(fractalStackScore, "Letra Stack %",   color=color.new(color.white, 100), display=display.data_window)
+
+
+// ── V2 EXPORTS — Energy / Resolution / Attractor buses for Master Senseei ─────
+//   Letra Resolution : 0 UNRESOLVED · 1 PARTIALLY RESOLVED · 2 RESOLVED
+//   Letra Residual   : residual (uncleaned) energy score 0-100
+//   Letra Attractor  : primary attractor strength 0-100
+//   Letra Completion : recursive completion score 0-100 (timing)
+plot(re_resolutionState == "RESOLVED" ? 2 : re_resolutionState == "PARTIALLY RESOLVED" ? 1 : 0, "Letra Resolution", color=color.new(color.white, 100), display=display.data_window)
+plot(re_residualEnergyScore,      "Letra Residual",   color=color.new(color.white, 100), display=display.data_window)
+plot(eae_primaryAttractorScore,   "Letra Attractor",  color=color.new(color.white, 100), display=display.data_window)
+plot(re_recursiveCompletionScore, "Letra Completion", color=color.new(color.white, 100), display=display.data_window)
+
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE)
+// Price moves through nested time cycles. For MN / W / D / H4 / H1 this tracks
+// where price sits inside each cycle (open · running high/low · prior high/low),
+// whether each side's liquidity has been taken, cycle completion %, cycle bias,
+// the cross-cycle ALIGNMENT, the first-target (low-first) probability and the
+// likely temporal SEQUENCE. Structure determines WHERE; time determines WHEN.
+// (5 added request.security calls — compact, panel-only; gated by a toggle.)
+// ═══════════════════════════════════════════════════════════════════════════════
+// (Engine 8.0 — Time Intelligence — moved to Master Senseei Unified to save Letra tokens.)
