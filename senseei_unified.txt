@@ -61,7 +61,10 @@ int    beliefSmooth   = input.int  (3,    "Belief EMA Smoothing",         group 
 // ═══════════════════════════════════════════════════════════════════════════════
 // PART A — INVISIBLE NETWORK ENGINE (embedded)
 // ═══════════════════════════════════════════════════════════════════════════════
-f_safeTF(simple string _tf) => timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
+// f_safeTF clamps a requested timeframe UP to the chart ONLY when the chart is
+// above H1 (memory guard). Below/at H1 every fixed timeframe is requested at its
+// TRUE resolution, so the analysis is identical on any intraday chart.
+f_safeTF(simple string _tf) => timeframe.in_seconds() > 3600 and timeframe.in_seconds(_tf) < timeframe.in_seconds() ? timeframe.period : _tf
 
 // FU / FLIP detector — dominant rejection wick at a local extreme (swept OR not).
 f_fuPool(simple float _wf, simple int _lb) =>
@@ -113,7 +116,6 @@ f_fuPool(simple float _wf, simple int _lb) =>
 [h1Tip, h1Mid, h1Dir, h1V, h1Sc]  = request.security(syminfo.tickerid, f_safeTF("60"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [m15Tip,m15Mid,m15Dir,m15V,m15Sc] = request.security(syminfo.tickerid, f_safeTF("15"),  f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
 [m5Tip, m5Mid, m5Dir, m5V, m5Sc]  = request.security(syminfo.tickerid, f_safeTF("5"),   f_fuPool(wickFrac, lookback), lookahead = barmerge.lookahead_off)
-[cTip,  cMid,  cDir,  cV,  cSc]   = f_fuPool(wickFrac, lookback)
 
 float _ema50 = ta.ema(close, 50)
 int   netBias = nz(mnV) == 1 ? nz(mnDir) : nz(wV) == 1 ? nz(wDir) : nz(dV) == 1 ? nz(dDir) : nz(h4V) == 1 ? nz(h4Dir) : nz(h1V) == 1 ? nz(h1Dir) : nz(m15V) == 1 ? nz(m15Dir) : nz(m5V) == 1 ? nz(m5Dir) : (close > _ema50 ? 1 : close < _ema50 ? -1 : 0)
@@ -152,13 +154,15 @@ f_nodeAdd(float _tip, float _mid, int _dir, float _sc, int _wt) =>
 
 int  _chartSec = timeframe.in_seconds()
 int  _chartWt  = _chartSec >= timeframe.in_seconds("M") ? 9 : _chartSec >= timeframe.in_seconds("W") ? 8 : _chartSec >= timeframe.in_seconds("D") ? 7 : _chartSec >= 14400 ? 6 : _chartSec >= 3600 ? 5 : _chartSec >= 900 ? 4 : _chartSec >= 300 ? 3 : _chartSec >= 180 ? 2 : 1
-bool _okMN = timeframe.in_seconds("M")   > _chartSec
-bool _okW  = timeframe.in_seconds("W")   > _chartSec
-bool _okD  = timeframe.in_seconds("D")   > _chartSec
-bool _okH4 = timeframe.in_seconds("240") > _chartSec
-bool _okH1 = timeframe.in_seconds("60")  > _chartSec
-bool _okM15= timeframe.in_seconds("15")  > _chartSec
-bool _okM5 = timeframe.in_seconds("5")   > _chartSec
+// Every fixed timeframe is ALWAYS scanned (memory-guarded above H1), so the node
+// network is identical regardless of the chart timeframe — no chart-relative gating.
+bool _okMN = true
+bool _okW  = true
+bool _okD  = true
+bool _okH4 = true
+bool _okH1 = true
+bool _okM15= true
+bool _okM5 = true
 var float _pvMN = na
 var float _pvW = na
 var float _pvD = na
@@ -166,10 +170,6 @@ var float _pvH4 = na
 var float _pvH1 = na
 var float _pvM15 = na
 var float _pvM5 = na
-var float _pvC = na
-if cV == 1 and not na(cTip) and (na(_pvC) or cTip != _pvC)
-    f_nodeAdd(cTip, cMid, nz(cDir), nz(cSc), _chartWt)
-    _pvC := cTip
 if _okMN and nz(mnV) == 1 and not na(mnTip) and (na(_pvMN) or mnTip != _pvMN)
     f_nodeAdd(mnTip, mnMid, nz(mnDir), nz(mnSc), 9)
     _pvMN := mnTip
@@ -272,52 +272,16 @@ f_phys(simple int _atrL, simple int _effL, simple float _effT, simple float _dis
     [_atr, _vel, _acc, _cvx, _csm, _eff, _dsp, _bImp, _rImp, _bDec, _rDec, _bCS, _rCS, _vd70, _vd50]
 
 [atr, velocity, acceleration, convexity, convSmooth, efficiency, displacement, bullImpulse, bearImpulse, bullMomDecay, bearMomDecay, bullConvShift, bearConvShift, phys_vd70, phys_vd50] = request.security(syminfo.tickerid, f_ltf("5"), f_phys(atrLen, effLen, effThresh, dispThresh, convMult), lookahead = barmerge.lookahead_off)
+// M5 high/low feed — so the wave's running cycle extreme (and thus waveProgress)
+// is measured on the fixed M5 wave, not the chart's bars.
+[m5Hi, m5Lo] = request.security(syminfo.tickerid, f_ltf("5"), [high, low], lookahead = barmerge.lookahead_off)
 
 // ── CHART-CONTEXT MARKET STRUCTURE (Section 4) — drives the lifecycle/spawn ────
-float structPivH = ta.pivothigh(high, structLenL, structLenL)
-float structPivL = ta.pivotlow (low,  structLenL, structLenL)
-var float lastPivHigh = na
-var float prevPivHigh = na
-var float lastPivLow  = na
-var float prevPivLow  = na
-var int   structBias  = 0
-if not na(structPivH)
-    prevPivHigh := lastPivHigh
-    lastPivHigh := structPivH
-if not na(structPivL)
-    prevPivLow  := lastPivLow
-    lastPivLow  := structPivL
-bool isHH = not na(lastPivHigh) and not na(prevPivHigh) and lastPivHigh > prevPivHigh
-bool isLH = not na(lastPivHigh) and not na(prevPivHigh) and lastPivHigh < prevPivHigh
-bool isHL = not na(lastPivLow)  and not na(prevPivLow)  and lastPivLow  > prevPivLow
-bool isLL = not na(lastPivLow)  and not na(prevPivLow)  and lastPivLow  < prevPivLow
-var float prevSwingHigh = na
-var float prevSwingLow  = na
-var float currSwingHigh = na
-var float currSwingLow  = na
-float swPivH = ta.pivothigh(high, pivotLen, pivotLen)
-float swPivL = ta.pivotlow (low,  pivotLen, pivotLen)
-if not na(swPivH)
-    prevSwingHigh := na(currSwingHigh) ? swPivH : currSwingHigh
-    currSwingHigh := swPivH
-if not na(swPivL)
-    prevSwingLow  := na(currSwingLow)  ? swPivL : currSwingLow
-    currSwingLow  := swPivL
-bool bullBOS = not na(prevSwingHigh) and close > prevSwingHigh
-bool bearBOS = not na(prevSwingLow)  and close < prevSwingLow
-bool bullCHoCH = not na(prevSwingHigh) and close > prevSwingHigh + atr * chochBufferATR
-bool bearCHoCH = not na(prevSwingLow)  and close < prevSwingLow  - atr * chochBufferATR
-if useStrictStructure
-    if isHH and isHL
-        structBias := 1
-    if isLH and isLL
-        structBias := -1
-else
-    if bullBOS
-        structBias := 1
-    if bearBOS
-        structBias := -1
-// Section 5 — pivot memory (order-block origin for the spawn engine)
+// ── CHART-CONTEXT pivot memory (Section 5) — order-block origin for the spawn.
+// NOTE: structBias / BOS / CHoCH are NOT computed from chart series here — they
+// are derived from the FIXED M5 engine (se5) below, so they never change with the
+// chart timeframe. Only the raw pivot memory (used as a spawn order-block anchor,
+// itself overridden by the M5 point-4) stays chart-local.
 float pivH = ta.pivothigh(high, pivotLen, pivotLen)
 float pivL = ta.pivotlow (low,  pivotLen, pivotLen)
 var float lastPivotPrice = na
@@ -566,6 +530,29 @@ int _stackBull = (m1_dir == 1 ? 1 : 0) + (l3_dir == 1 ? 1 : 0) + (l0_dir == 1 ? 
 int _stackBear = (m1_dir == -1 ? 1 : 0) + (l3_dir == -1 ? 1 : 0) + (l0_dir == -1 ? 1 : 0) + (l1_dir == -1 ? 1 : 0) + (l2_dir == -1 ? 1 : 0) + (l4_dir == -1 ? 1 : 0)
 int   fractalStackDir   = _stackBull > _stackBear ? 1 : _stackBear > _stackBull ? -1 : 0
 float fractalStackScore = math.max(_stackBull, _stackBear) / 6.0 * 100.0
+
+// ── M5-FIXED MARKET STRUCTURE — structBias / BOS / CHoCH from the M5 engine ───
+// Replaces the old chart-native structure so the bias the lifecycle/spawn/belief
+// engines consume is identical on any chart timeframe.
+bool isHH = not na(se5_sh) and not na(se5_psh) and se5_sh > se5_psh
+bool isLH = not na(se5_sh) and not na(se5_psh) and se5_sh < se5_psh
+bool isHL = not na(se5_sl) and not na(se5_psl) and se5_sl > se5_psl
+bool isLL = not na(se5_sl) and not na(se5_psl) and se5_sl < se5_psl
+bool bullBOS   = nz(se5_bos) == 1
+bool bearBOS   = nz(se5_bos) == -1
+bool bullCHoCH = nz(se5_ch) == 1
+bool bearCHoCH = nz(se5_ch) == -1
+var int structBias = 0
+if useStrictStructure
+    if isHH and isHL
+        structBias := 1
+    if isLH and isLL
+        structBias := -1
+else
+    if bullBOS
+        structBias := 1
+    if bearBOS
+        structBias := -1
 
 // ── PHYSICS OBSERVATION LAYER (Section 9 — exact) ─────────────────────────────
 float velocityScore     = math.min(math.abs(velocity)     / math.max(atr * 0.1, 1e-10) * 50.0, 100.0)
@@ -912,15 +899,15 @@ if _allowSpawn
     inducRetrExtremeHigh := na
     inducZoneLow         := na
     inducZoneHigh        := na
-    cycleHigh            := high
-    cycleLow             := low
+    cycleHigh            := m5Hi
+    cycleLow             := m5Lo
     isRecursiveWave      := false
     entryCycle           := 0
     waveDepth            := 0
-if direction == 1 and high > nz(cycleHigh, high)
-    cycleHigh := high
-if direction == -1 and low < nz(cycleLow, low)
-    cycleLow := low
+if direction == 1 and m5Hi > nz(cycleHigh, m5Hi)
+    cycleHigh := m5Hi
+if direction == -1 and m5Lo < nz(cycleLow, m5Lo)
+    cycleLow := m5Lo
 bool expInducBuyEv  = direction == 1  and bearImpulse and structBias ==  1
 bool expInducSellEv = direction == -1 and bullImpulse and structBias == -1
 if expInducBuyEv and na(inducExpOriginHigh)
@@ -1008,8 +995,8 @@ if recursiveJustFired
     inducRetrExtremeHigh := na
     inducZoneLow         := na
     inducZoneHigh        := na
-    cycleHigh            := high
-    cycleLow             := low
+    cycleHigh            := m5Hi
+    cycleLow             := m5Lo
     contBar              := bar_index
 int  barsSinceCont = not na(contBar) ? bar_index - contBar : (not na(obBirthBar) ? bar_index - obBirthBar : 0)
 bool bullInvalid  = direction ==  1 and close < flipBot - atr * 0.5
