@@ -1407,7 +1407,7 @@ if barstate.islast
     if showVerdict
         if not na(vLbl)
             label.delete(vLbl)
-        vLbl := label.new(bar_index + 3, close, "SENSEEI  " + action + "   " + intent + "  " + str.tostring(math.round(confidence)) + "%", style = label.style_label_left, color = color.new(aCol, 8), textcolor = #e2e8f0, size = size.large)
+        vLbl := label.new(bar_index + 5, high + atr * 2.5, "SENSEEI " + action + " · " + str.tostring(math.round(confidence)) + "%", style = label.style_label_down, color = color.new(aCol, 18), textcolor = #e2e8f0, size = size.small)
 
     // ══════════════════════════════════════════════════════════════════════════
     // PART E — PANELS
@@ -1551,12 +1551,19 @@ if barstate.islast
             if not na(se5_sl)
                 array.push(hud_lines, line.new(bar_index - 3, se5_sl, _xr, se5_sl, color = color.new(#94a3b8, 45), width = 1, style = line.style_dashed))
                 array.push(hud_lbls, label.new(_xr, se5_sl, "M5 SWING LO  " + str.tostring(math.round_to_mintick(se5_sl)), style = label.style_label_left, color = color.new(#94a3b8, 75), textcolor = #cbd5e1, size = size.tiny))
-            if not na(se60_sh)
-                array.push(hud_lines, line.new(bar_index - 3, se60_sh, _xr, se60_sh, color = color.new(#a78bfa, 62), width = 1, style = line.style_dotted))
-                array.push(hud_lbls, label.new(_xr, se60_sh, "H1 SWING HI  " + str.tostring(math.round_to_mintick(se60_sh)), style = label.style_label_left, color = color.new(#a78bfa, 80), textcolor = #c4b5fd, size = size.tiny))
-            if not na(se60_sl)
-                array.push(hud_lines, line.new(bar_index - 3, se60_sl, _xr, se60_sl, color = color.new(#a78bfa, 62), width = 1, style = line.style_dotted))
-                array.push(hud_lbls, label.new(_xr, se60_sl, "H1 SWING LO  " + str.tostring(math.round_to_mintick(se60_sl)), style = label.style_label_left, color = color.new(#a78bfa, 80), textcolor = #c4b5fd, size = size.tiny))
+            // CYCLE LIQUIDITY — current period highs/lows, labelled as LIQUIDITY (not structure)
+            if not na(tH1H)
+                array.push(hud_lines, line.new(bar_index - 3, tH1H, _xr, tH1H, color = color.new(#a78bfa, 65), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, tH1H, "Hourly High  " + str.tostring(math.round_to_mintick(tH1H)), style = label.style_label_left, color = color.new(#a78bfa, 84), textcolor = #c4b5fd, size = size.tiny))
+            if not na(tH1L)
+                array.push(hud_lines, line.new(bar_index - 3, tH1L, _xr, tH1L, color = color.new(#a78bfa, 65), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, tH1L, "Hourly Low  " + str.tostring(math.round_to_mintick(tH1L)), style = label.style_label_left, color = color.new(#a78bfa, 84), textcolor = #c4b5fd, size = size.tiny))
+            if not na(tDH)
+                array.push(hud_lines, line.new(bar_index - 3, tDH, _xr, tDH, color = color.new(#38bdf8, 72), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, tDH, "Daily High  " + str.tostring(math.round_to_mintick(tDH)), style = label.style_label_left, color = color.new(#38bdf8, 86), textcolor = #7dd3fc, size = size.tiny))
+            if not na(tDL)
+                array.push(hud_lines, line.new(bar_index - 3, tDL, _xr, tDL, color = color.new(#38bdf8, 72), width = 1, style = line.style_dotted))
+                array.push(hud_lbls, label.new(_xr, tDL, "Daily Low  " + str.tostring(math.round_to_mintick(tDL)), style = label.style_label_left, color = color.new(#38bdf8, 86), textcolor = #7dd3fc, size = size.tiny))
             // FLIGHT PLAN / VECTOR — projected route through the waypoints
             color _fpCol = master == 1 ? #34d399 : master == -1 ? #fb7185 : #38bdf8
             int   _x1 = bar_index + 8
