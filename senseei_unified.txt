@@ -11,7 +11,7 @@
 // For the FULL multi-timeframe network, run it on M1–M15 (Pine builds the network
 // from the chart timeframe upward).
 // ═══════════════════════════════════════════════════════════════════════════════
-indicator("F16 Raptor 2", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
+indicator("F16 Raptor 3", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // ── Inputs ───────────────────────────────────────────────────────────────────
 string GRP = "Master Senseei"
@@ -1096,46 +1096,98 @@ if not na(atkT3Px) and (atkT3Px >= _atkRef ? high >= atkT3Px : low <= atkT3Px)
     atkT3Hit := true
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MILESTONE LIFECYCLE LABELS (display only) — ONE marker per lifecycle EVENT of the
-// M5 wave, in canonical order, using the lifecycle vocabulary. Replaces the per-
-// phase region carpet. DISPLACEMENT = counter-move BEFORE the flip zone (repeatable,
-// numbered); the same behaviour INSIDE the flip zone = INDUCTION. FLIPZONE + DEMAND
-// render as horizontal bands. No Engine 1A changes — reads se5 phase / flip / origin.
+// MILESTONE LIFECYCLE LABELS (display only) — ONE plain-text marker per KEY lifecycle
+// milestone of the CURRENT M5 wave, anchored at the bar it first occurred. Milestones
+// are CAPTURED during history into var slots and RENDERED ONCE on the last bar — no
+// per-bar carpet, no colored pills. Reads ONLY what Engine 1A reports via the canonical
+// se5 phase code (f_phaseStr):
+//   5/6  New High / New Low        → NEW HIGH / NEW LOW   (objective — starts a wave)
+//   8/9  Retracement / Pre-Conv    → DISPLACEMENT(s)      (counter-moves BEFORE flip)
+//   10   Retracement Induction     → INDUCTION            (counter-move AT the flip)
+//   11   Retracement Liquidity     → LIQUIDATION          (drive toward demand/supply)
+//   12/13 Demand / Supply Return   → TAP TO DEMAND/SUPPLY (band)
+//   entryCycle++                   → ENTRY CYCLE          (boxed)
+// Each new objective (5/6) clears the later slots, so only the most-recent wave shows.
+// No Engine-1A changes.
 // ═══════════════════════════════════════════════════════════════════════════════
-f_mileWord(int _c) => _c == 1 ? "EXPANSION" : _c == 2 ? "DISPLACEMENT" : _c == 3 ? "INDUCTION" : _c == 4 ? "LIQUIDATION" : _c == 5 ? "NEW HIGH" : _c == 6 ? "NEW LOW" : _c == 7 ? "ABSORPTION" : (_c == 8 or _c == 9) ? "DISPLACEMENT" : _c == 10 ? "INDUCTION" : _c == 11 ? "LIQUIDATION" : _c == 12 ? "TAP TO DEMAND" : _c == 13 ? "TAP TO SUPPLY" : ""
-f_mileCol(int _c) => (_c == 5 or _c == 6) ? #e2e8f0 : _c == 7 ? #fb7185 : (_c == 4 or _c == 11) ? #22d3ee : (_c == 3 or _c == 10) ? #fbbf24 : (_c == 2 or _c == 8 or _c == 9) ? #38bdf8 : (_c == 12 or _c == 13) ? #a78bfa : #34d399
+f_ord(int _n) => _n == 1 ? "First" : _n == 2 ? "Second" : _n == 3 ? "Third" : _n == 4 ? "Fourth" : str.tostring(_n) + "th"
 
 var array<label> mileLbls = array.new<label>()
-var int   _mileWaveDir = 0
-var int   _mileLastCode = 0
-var int   _mileDispN = 0
 var box   flipBand      = na
 var label flipBandLbl   = na
 var box   demandBand    = na
 var label demandBandLbl = na
+var box   entryBox      = na
+var label entryLbl      = na
+
+// ── Per-wave milestone slots (bar_index + price). Reset on each new objective. ──
+var int          _wvObjBar  = na
+var float        _wvObjPx   = na
+var bool         _wvObjHigh = true
+var array<int>   _dispBars  = array.new_int()
+var array<float> _dispPx    = array.new_float()
+var int          _wvIndBar  = na
+var float         _wvIndPx   = na
+var int          _wvLiqBar  = na
+var float         _wvLiqPx   = na
+var int          _wvTapBar  = na
+var int          _wvEntBar  = na
+var float         _wvEntPx   = na
+var int          _wvLastCyc = 0
+var bool          _prevObj   = false
+var bool          _prevDisp  = false
 
 if showRegions and barstate.isconfirmed
-    int _pc = int(nz(se5_ph))
-    if l0_dir != _mileWaveDir
-        _mileWaveDir := l0_dir
-        _mileLastCode := 0
-        _mileDispN := 0
-    if _pc != 0 and _pc != _mileLastCode and f_mileWord(_pc) != ""
-        bool _isDisp = _pc == 2 or _pc == 8 or _pc == 9
-        bool _inFlip = not na(flipTop) and not na(flipBot) and close <= flipTop and close >= flipBot
-        string _w = _isDisp ? (_inFlip ? "INDUCTION" : "DISPLACEMENT") : f_mileWord(_pc)
-        if _w == "DISPLACEMENT"
-            _mileDispN := _mileDispN + 1
-        string _txt = (_w == "DISPLACEMENT" and _mileDispN > 1) ? "DISPLACEMENT " + str.tostring(_mileDispN) : _w
-        int _cc = (_isDisp and _inFlip) ? 3 : _pc
-        float _y = l0_dir == 1 ? high + atr * 0.9 : low - atr * 0.9
-        label _ml = label.new(bar_index, _y, _txt, style = l0_dir == 1 ? label.style_label_down : label.style_label_up, color = color.new(f_mileCol(_cc), 12), textcolor = #0d1117, size = size.small)
-        array.push(mileLbls, _ml)
-        if array.size(mileLbls) > 60
-            label.delete(array.shift(mileLbls))
-        _mileLastCode := _pc
+    int  _pc     = int(nz(se5_ph))
+    bool _isObj  = _pc == 5 or _pc == 6
+    bool _isDisp = _pc == 8 or _pc == 9
+    bool _isInd  = _pc == 10
+    bool _isLiq  = _pc == 11
+    bool _isTap  = _pc == 12 or _pc == 13
+    // New objective (edge into New High/Low) → begin a fresh labeled wave.
+    if _isObj and not _prevObj
+        _wvObjBar  := bar_index
+        _wvObjHigh := _pc == 5
+        _wvObjPx   := _pc == 5 ? high + atr * 0.4 : low - atr * 0.4
+        array.clear(_dispBars)
+        array.clear(_dispPx)
+        _wvIndBar := na
+        _wvIndPx  := na
+        _wvLiqBar := na
+        _wvLiqPx  := na
+        _wvTapBar := na
+        _wvEntBar := na
+        _wvEntPx  := na
+    float _off = _wvObjHigh ? atr * 0.5 : -atr * 0.5
+    // Displacement episodes — counter-moves BEFORE the flip zone (capped at 4).
+    if _isDisp and not _prevDisp and not na(_wvObjBar) and array.size(_dispBars) < 4
+        array.push(_dispBars, bar_index)
+        array.push(_dispPx, (_wvObjHigh ? high : low) + _off)
+    // Induction — counter-move AT the flip zone (first occurrence).
+    if _isInd and na(_wvIndBar) and not na(_wvObjBar)
+        _wvIndBar := bar_index
+        _wvIndPx  := (_wvObjHigh ? high : low) + _off
+    // Liquidation — the drive toward demand/supply (first occurrence).
+    if _isLiq and na(_wvLiqBar) and not na(_wvObjBar)
+        _wvLiqBar := bar_index
+        _wvLiqPx  := (_wvObjHigh ? high : low) + _off * 1.4
+    // Tap to demand / supply (first occurrence).
+    if _isTap and na(_wvTapBar) and not na(_wvObjBar)
+        _wvTapBar := bar_index
+    // Entry cycle commenced (cycle counter advanced).
+    if entryCycle > _wvLastCyc and not na(_wvObjBar)
+        _wvEntBar := bar_index
+        _wvEntPx  := close
+    _wvLastCyc := entryCycle
+    _prevObj   := _isObj
+    _prevDisp  := _isDisp
 
 if showRegions and barstate.islast
+    // ── Clear the previous render ────────────────────────────────────────────
+    if array.size(mileLbls) > 0
+        for _i = 0 to array.size(mileLbls) - 1
+            label.delete(array.get(mileLbls, _i))
+        array.clear(mileLbls)
     if not na(flipBand)
         box.delete(flipBand)
     if not na(flipBandLbl)
@@ -1144,13 +1196,33 @@ if showRegions and barstate.islast
         box.delete(demandBand)
     if not na(demandBandLbl)
         label.delete(demandBandLbl)
+    if not na(entryBox)
+        box.delete(entryBox)
+    if not na(entryLbl)
+        label.delete(entryLbl)
+    // ── Milestone markers — plain text, one per milestone of the current wave ──
+    if not na(_wvObjBar)
+        array.push(mileLbls, label.new(_wvObjBar, _wvObjPx, _wvObjHigh ? "NEW HIGH" : "NEW LOW", style = label.style_none, textcolor = #0d1117, size = size.normal))
+    if array.size(_dispBars) > 0
+        for _i = 0 to array.size(_dispBars) - 1
+            array.push(mileLbls, label.new(array.get(_dispBars, _i), array.get(_dispPx, _i), f_ord(_i + 1) + " displacement", style = label.style_none, textcolor = #0d1117, size = size.small))
+    if not na(_wvIndBar)
+        array.push(mileLbls, label.new(_wvIndBar, _wvIndPx, "Induction", style = label.style_none, textcolor = #0d1117, size = size.small))
+    if not na(_wvLiqBar)
+        array.push(mileLbls, label.new(_wvLiqBar, _wvLiqPx, "Liquidation", style = label.style_none, textcolor = #0d1117, size = size.normal))
+    // ── FLIPZONE band ─────────────────────────────────────────────────────────
     if not na(flipTop) and not na(flipBot)
         flipBand := box.new(bar_index - 250, flipTop, bar_index + 10, flipBot, bgcolor = color.new(#fbbf24, 84), border_color = color.new(#fbbf24, 55), border_width = 1)
         flipBandLbl := label.new(bar_index + 10, (flipTop + flipBot) / 2.0, "FLIPZONE", style = label.style_label_left, color = color.new(#fbbf24, 35), textcolor = #0d1117, size = size.small)
+    // ── TAP TO DEMAND / SUPPLY band ───────────────────────────────────────────
     float _demT = direction == 1 ? point4OriginLow : direction == -1 ? point4OriginHigh : na
     if not na(_demT)
         demandBand := box.new(bar_index - 250, _demT + atr * 0.25, bar_index + 10, _demT - atr * 0.25, bgcolor = color.new(#fbbf24, 84), border_color = color.new(#fbbf24, 55), border_width = 1)
         demandBandLbl := label.new(bar_index + 10, _demT, direction == 1 ? "TAP TO DEMAND" : "TAP TO SUPPLY", style = label.style_label_left, color = color.new(#fbbf24, 35), textcolor = #0d1117, size = size.small)
+    // ── ENTRY CYCLE (boxed) ───────────────────────────────────────────────────
+    if not na(_wvEntBar) and not na(_wvEntPx)
+        entryBox := box.new(_wvEntBar - 3, _wvEntPx + atr * 0.7, _wvEntBar + 3, _wvEntPx - atr * 0.7, bgcolor = color.new(#22d3ee, 92), border_color = color.new(#22d3ee, 20), border_width = 1)
+        entryLbl := label.new(_wvEntBar, _wvEntPx, "ENTRY CYCLE", style = label.style_none, textcolor = #22d3ee, size = size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ENGINE 8.0 — TIME INTELLIGENCE ENGINE (TIE) — full 5-cycle stack + sub-engines
