@@ -31,6 +31,7 @@ bool   showCopilot = input.bool (true, "Show Dual Co-Pilot (Opportunity + Senzo)
 bool   showHUD     = input.bool (true, "Plot HUD on chart (flight plan · target locks · formation)", group = GRP)
 bool   showVerdict = input.bool (true, "Show verdict label",          group = GRP)
 bool   showAttack  = input.bool (true, "Show Attack Sequence panel (entry/stop/target)", group = GRP)
+bool   showTF      = input.bool (true, "Show Wave & Timeframes panel (bottom-left)", group = GRP)
 int    minConf     = input.int  (55,  "Min confidence to ATTACK",     group = GRP, minval = 0, maxval = 100)
 int    pivLen      = input.int  (8,   "Wave pivot length",            group = GRP, minval = 2, maxval = 50)
 bool   showRegions = input.bool (true, "Show phase REGION labels",    group = GRP)
@@ -1239,6 +1240,7 @@ var table        strat     = na
 var table        ctxPanel  = na
 var table        copilot   = na
 var table        attack    = na
+var table        tfPanel   = na
 var int    gMaster   = 0
 var float  gConflict = 0.0
 var string gAction   = "WAIT"
@@ -1459,7 +1461,7 @@ if barstate.islast
 
     if showStrat
         if na(strat)
-            strat := table.new(position.top_left, 2, 11, bgcolor = color.new(#0d1117, 8), frame_color = color.new(#fbbf24, 30), frame_width = 1, border_width = 0)
+            strat := table.new(position.top_left, 2, 10, bgcolor = color.new(#0d1117, 8), frame_color = color.new(#fbbf24, 30), frame_width = 1, border_width = 0)
         table.cell(strat, 0, 0, "◤ SENSEEI ▌ HUD " + _liveDot, text_color = #d7faff, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#4338ca, 30))
         table.cell(strat, 1, 0, master == 1 ? "▲ BULL" : master == -1 ? "▼ BEAR" : "○ —", text_color = #e2e8f0, text_size = size.normal, bgcolor = color.new(vCol, 50))
         table.cell(strat, 0, 1, "Phase", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
@@ -1480,8 +1482,6 @@ if barstate.islast
         table.cell(strat, 1, 8, recursiveComplete ? "recursive" : "primary", text_color = #94a3b8, text_size = size.small)
         table.cell(strat, 0, 9, "ACTION → " + f_cpNode(_nextIdx), text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
         table.cell(strat, 1, 9, " " + action + " ", text_color = #e2e8f0, text_size = size.normal, bgcolor = color.new(aCol, 35))
-        table.cell(strat, 0, 10, story, text_color = #cbd5e1, text_size = size.small, text_halign = text.align_left)
-        table.cell(strat, 1, 10, "", text_size = size.small)
 
     // ══════════════════════════════════════════════════════════════════════════
     // DUAL CO-PILOT (bottom-right) — Opportunity (tactical) + Senzo (strategic)
@@ -1697,6 +1697,37 @@ if barstate.islast
         table.cell(attack, 0, 5, "TARGET 3", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
         table.cell(attack, 1, 5, na(atkT3Px) ? "—" : str.tostring(math.round_to_mintick(atkT3Px)), text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_center)
         table.cell(attack, 2, 5, atkT3Hit ? "✓ DONE" : "○ PENDING", text_color = #050a12, text_size = size.normal, text_halign = text.align_center, bgcolor = color.new(atkT3Hit ? #34d399 : #fb7185, 10))
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // WAVE & TIMEFRAMES PANEL (bottom-left) — narrative + per-TF wave stack
+    // ══════════════════════════════════════════════════════════════════════════
+    if showTF
+        if na(tfPanel)
+            tfPanel := table.new(position.bottom_left, 2, 12, bgcolor = color.new(#0d1117, 6), frame_color = color.new(#6366f1, 28), frame_width = 2, border_width = 0)
+        table.cell(tfPanel, 0, 0, "◤ WAVE & TIMEFRAMES", text_color = #d7faff, text_size = size.normal, text_halign = text.align_left, bgcolor = color.new(#4338ca, 20))
+        table.cell(tfPanel, 1, 0, _liveDot, text_color = _pulse ? #a5b4fc : #475569, text_size = size.normal, bgcolor = color.new(#4338ca, 20))
+        table.cell(tfPanel, 0, 1, "Phase", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 1, currentDisplayPhase, text_color = vCol, text_size = size.small, text_halign = text.align_left)
+        table.cell(tfPanel, 0, 2, waveNarr, text_color = #cbd5e1, text_size = size.small, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 2, "", text_size = size.small)
+        table.cell(tfPanel, 0, 3, "──── TIMEFRAMES ────", text_color = #5fd0ff, text_size = size.small, text_halign = text.align_left, bgcolor = color.new(#0c4a6e, 40))
+        table.cell(tfPanel, 1, 3, "", text_size = size.small, bgcolor = color.new(#0c4a6e, 40))
+        table.cell(tfPanel, 0, 4, "M1", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 4, m1_dir == 1 ? "▲ Bullish" : m1_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = m1_dir == 1 ? #34d399 : m1_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 5, "M3", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 5, l3_dir == 1 ? "▲ Bullish" : l3_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = l3_dir == 1 ? #34d399 : l3_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 6, "» M5", text_color = #e2e8f0, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 6, l0_dir == 1 ? "▲ Bullish" : l0_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = l0_dir == 1 ? #34d399 : l0_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 7, "M15", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 7, l1_dir == 1 ? "▲ Bullish" : l1_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = l1_dir == 1 ? #34d399 : l1_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 8, "H1", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 8, l2_dir == 1 ? "▲ Bullish" : l2_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = l2_dir == 1 ? #34d399 : l2_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 9, "H4", text_color = #94a3b8, text_size = size.normal, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 9, l4_dir == 1 ? "▲ Bullish" : l4_dir == -1 ? "▼ Bearish" : "— Neutral", text_color = l4_dir == 1 ? #34d399 : l4_dir == -1 ? #fb7185 : #475569, text_size = size.normal)
+        table.cell(tfPanel, 0, 10, "Authority", text_color = #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 10, f_gauge(fractalStackScore) + " " + str.tostring(math.round(fractalStackScore)) + "%", text_color = fractalStackDir == 1 ? #34d399 : fractalStackDir == -1 ? #fb7185 : #fbbf24, text_size = size.small)
+        table.cell(tfPanel, 0, 11, (fractalStackScore >= 66 ? "DOMINANT" : "MIXED") + " · " + (fractalStackDir == 1 ? "TRANSFER UPWARD" : fractalStackDir == -1 ? "TRANSFER DOWNWARD" : "BALANCED"), text_color = fractalStackDir == 1 ? #34d399 : fractalStackDir == -1 ? #fb7185 : #94a3b8, text_size = size.small, text_halign = text.align_left)
+        table.cell(tfPanel, 1, 11, "", text_size = size.small)
 
 // ── Alerts (global scope) ─────────────────────────────────────────────────────
 alertcondition(gAction == "ATTACK" and gMaster == 1,  "Senseei ATTACK Long",  "Master Senseei: ATTACK long")
